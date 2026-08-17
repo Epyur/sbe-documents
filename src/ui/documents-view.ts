@@ -265,9 +265,13 @@ export class DocumentsView extends ItemView {
     const typeLabel = container.createEl('label', { text: 'Тип документа', cls: 'tn-doc-label' });
     const typeInput = container.createEl('input', {
       attr: { type: 'text', list: 'tn-doc-types' },
-      cls: 'tn-doc-input tn-doc-mb12',
+      cls: 'tn-doc-input',
     });
     this.renderDocTypeDatalist(typeInput);
+
+    const typeRow = container.createDiv({ cls: 'tn-doc-flex tn-doc-mb12' });
+    const addTypeBtn = typeRow.createEl('button', { text: '➕ Создать тип документа', cls: 'tn-btn tn-btn-ghost' });
+    addTypeBtn.addEventListener('click', () => this.createDocTypeFromField(typeInput));
 
     const curatorLabel = container.createEl('label', { text: 'Куратор (email)', cls: 'tn-doc-label' });
     const curatorInput = container.createEl('input', {
@@ -369,10 +373,14 @@ export class DocumentsView extends ItemView {
     const typeLabel = container.createEl('label', { text: 'Тип документа', cls: 'tn-doc-label' });
     const typeInput = container.createEl('input', {
       attr: { type: 'text', list: 'tn-doc-types' },
-      cls: 'tn-doc-input tn-doc-mb12',
+      cls: 'tn-doc-input',
     });
     typeInput.value = doc.doc_type;
     this.renderDocTypeDatalist(typeInput);
+
+    const typeRow = container.createDiv({ cls: 'tn-doc-flex tn-doc-mb12' });
+    const addTypeBtn = typeRow.createEl('button', { text: '➕ Создать тип документа', cls: 'tn-btn tn-btn-ghost' });
+    addTypeBtn.addEventListener('click', () => this.createDocTypeFromField(typeInput));
 
     const curatorLabel = container.createEl('label', { text: 'Куратор (email)', cls: 'tn-doc-label' });
     const curatorInput = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
@@ -491,6 +499,24 @@ export class DocumentsView extends ItemView {
       datalist.createEl('option', { value: t });
     }
     document.body.appendChild(datalist);
+  }
+
+  /** Добавляет тип документа из введённого имени (если ещё нет) и обновляет datalist. */
+  private async createDocTypeFromField(typeInput: HTMLInputElement): Promise<void> {
+    const name = typeInput.value.trim();
+    if (!name) {
+      new Notice('Введите название типа документа');
+      typeInput.focus();
+      return;
+    }
+    const added = this.plugin.documentsDb.addDocType(name);
+    await this.plugin.documentsDb.save();
+    this.renderDocTypeDatalist(typeInput);
+    if (added) {
+      new Notice(`Тип документа «${name}» создан`);
+    } else {
+      new Notice(`Тип документа «${name}» уже существует`);
+    }
   }
 
   private async exportHtml(): Promise<void> {

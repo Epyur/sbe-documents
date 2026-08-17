@@ -81,6 +81,15 @@ export class DocumentsDatabase {
     return this.data.doc_types;
   }
 
+  /** Добавляет тип документа в локальный реестр (для datalist), если его ещё нет. */
+  addDocType(name: string): boolean {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return false;
+    if (this.data.doc_types.includes(trimmed)) return false;
+    this.data.doc_types.push(trimmed);
+    return true;
+  }
+
   private rememberDocType(t: string): void {
     const trimmed = (t || '').trim();
     if (!trimmed) return;

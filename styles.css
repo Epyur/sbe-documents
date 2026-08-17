@@ -477,6 +477,13 @@
   font-weight: 600;
 }
 
+.tn-doc-flex {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .tn-doc-mb8 {
   margin-bottom: 8px;
 }
