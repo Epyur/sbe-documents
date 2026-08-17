@@ -11,11 +11,14 @@ import { errorMessage } from '../../sbe-core/src/utils/errors';
 export interface SbeDocumentsSettings {
   apiUrl: string;
   defaultAuthor: string;
+  /** Флаг одноразовой миграции из legacy-кэша монолита (защита от повторного импорта). */
+  legacyMigrated: boolean;
 }
 
 const DEFAULT_SETTINGS: SbeDocumentsSettings = {
   apiUrl: 'https://epyur.fvds.ru',
   defaultAuthor: 'И.И. Иванов',
+  legacyMigrated: false,
 };
 
 const LEGACY_CACHE_PATH = 'yourbase/yougile_cache.json';
@@ -84,7 +87,14 @@ export default class SbeDocumentsPlugin extends Plugin {
       console.warn(`Документы: удалено ${removed} дубликатов по id из локальной БД`);
     }
 
-    if (this.documentsDb.getAll().length > 0) return;
+    // Флаг в настройках гарантирует одноразовость даже при пустой/очищенной локальной БД
+    // (иначе повторный запуск плагина дублировал бы все legacy-документы с новыми id).
+    if (this.settings.legacyMigrated) return;
+    if (this.documentsDb.getAll().length > 0) {
+      this.settings.legacyMigrated = true;
+      await this.saveSettings();
+      return;
+    }
 
     const adapter = this.app.vault.adapter;
     try {
@@ -162,6 +172,8 @@ export default class SbeDocumentsPlugin extends Plugin {
 
       const added = this.documentsDb.importLegacy(rawDocs.map(r => r.doc));
       await this.documentsDb.save();
+      this.settings.legacyMigrated = true;
+      await this.saveSettings();
       if (added > 0) {
         new Notice(`Документы: импортировано ${added} документов из legacy-БД. Они будут отправлены на сервер при синхронизации.`);
       }

@@ -19,7 +19,8 @@
 }
 
 .tn-doc-input,
-.tn-doc-textarea {
+.tn-doc-textarea,
+.tn-doc-select {
   width: 100%;
   box-sizing: border-box;
 }

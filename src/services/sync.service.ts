@@ -84,6 +84,83 @@ export class DocumentsSyncService {
     }
   }
 
+  /** Возвращает роль текущего пользователя ({email, role, hasAccess}). */
+  async getMyPermission(): Promise<{ email: string; role: string; hasAccess: boolean }> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/permissions/me`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      return JSON.parse(res.text) as { email: string; role: string; hasAccess: boolean };
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе permissions/me:', errorMessage(e));
+      return { email: '', role: '', hasAccess: false };
+    }
+  }
+
+  /** Список прав (для admin). */
+  async listPermissions(): Promise<Array<{ email: string; role: string }>> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/permissions`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { permissions?: Array<{ email: string; role: string }> };
+      return Array.isArray(data.permissions) ? data.permissions : [];
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе permissions:', errorMessage(e));
+      return [];
+    }
+  }
+
+  /** Устанавливает/отзывает роль (для admin). role='' — отозвать. */
+  async setPermission(email: string, role: string): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/permissions`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ email, role }),
+    });
+    this.assertOk(res);
+  }
+
+  /** Текущий уровень общего доступа (для admin). */
+  async getCommonAccess(): Promise<string> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/common-access`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { level?: string };
+      return data.level || '';
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе common-access:', errorMessage(e));
+      return '';
+    }
+  }
+
+  /** Устанавливает уровень общего доступа (для admin). level='' — отключить. */
+  async setCommonAccess(level: string): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/common-access`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ level }),
+    });
+    this.assertOk(res);
+  }
+
   /** Загружает файл документа в S3 через сервис. Возвращает file_key/file_url. */
   async uploadFile(data: ArrayBuffer, fileName: string): Promise<UploadFileResponse> {
     const token = await this.getToken();

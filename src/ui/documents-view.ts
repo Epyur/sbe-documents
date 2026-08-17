@@ -11,6 +11,7 @@ export class DocumentsView extends ItemView {
   private selectedDocTypes: Set<string> = new Set();
   private searchQuery = '';
   private searchTimeout: number | null = null;
+  private myRole = '';
 
   constructor(leaf: WorkspaceLeaf, plugin: SbeDocumentsPlugin) {
     super(leaf);
@@ -33,7 +34,24 @@ export class DocumentsView extends ItemView {
     const container = this.contentEl;
     container.addClass('tn-doc-container');
     this.containerElContent = container.createDiv();
+    try {
+      const me = await this.plugin.syncService.getMyPermission();
+      this.myRole = me.hasAccess ? me.role : '';
+    } catch (e: unknown) {
+      console.warn('Документы: не удалось получить роль:', errorMessage(e));
+      this.myRole = '';
+    }
     await this.syncAndRender();
+  }
+
+  /** Роль editor/admin — можно создавать/редактировать документы. */
+  private get canEdit(): boolean {
+    return this.myRole === 'editor' || this.myRole === 'admin';
+  }
+
+  /** Роль commenter+ — можно добавлять замечания. */
+  private get canComment(): boolean {
+    return this.myRole === 'commenter' || this.myRole === 'editor' || this.myRole === 'admin';
   }
 
   refresh(): void {
@@ -46,8 +64,10 @@ export class DocumentsView extends ItemView {
 
     const header = container.createDiv({ cls: 'tn-doc-header' });
     header.createEl('h3', { text: '📄 Документы' });
-    const createBtn = header.createEl('button', { text: '➕ Добавить документ', cls: 'tn-btn tn-btn-primary' });
-    createBtn.addEventListener('click', () => this.showCreateForm());
+    if (this.canEdit) {
+      const createBtn = header.createEl('button', { text: '➕ Добавить документ', cls: 'tn-btn tn-btn-primary' });
+      createBtn.addEventListener('click', () => this.showCreateForm());
+    }
     const syncBtn = header.createEl('button', { text: '🔄', cls: 'tn-btn tn-btn-ghost' });
     syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
     const exportBtn = header.createEl('button', { text: '📄 Экспорт HTML', cls: 'tn-btn tn-btn-ghost' });
@@ -218,13 +238,17 @@ export class DocumentsView extends ItemView {
 
     const btnRow = container.createDiv({ cls: 'tn-doc-header tn-doc-mt12' });
 
-    const relatedBtn = btnRow.createEl('button', { text: '🔗 Связанный документ', cls: 'tn-btn tn-btn-ghost' });
-    relatedBtn.addEventListener('click', () => this.showCreateRelatedForm(doc));
+    if (this.canEdit) {
+      const relatedBtn = btnRow.createEl('button', { text: '🔗 Связанный документ', cls: 'tn-btn tn-btn-ghost' });
+      relatedBtn.addEventListener('click', () => this.showCreateRelatedForm(doc));
+    }
 
-    const remarkBtn = btnRow.createEl('button', { text: '📝 Добавить замечание', cls: 'tn-btn tn-btn-ghost' });
-    remarkBtn.addEventListener('click', () => this.showRemarkForm(doc));
+    if (this.canComment) {
+      const remarkBtn = btnRow.createEl('button', { text: '📝 Добавить замечание', cls: 'tn-btn tn-btn-ghost' });
+      remarkBtn.addEventListener('click', () => this.showRemarkForm(doc));
+    }
 
-    if (doc.completed) {
+    if (this.canEdit && doc.completed) {
       const reopenBtn = btnRow.createEl('button', { text: '🔄 Возобновить', cls: 'tn-btn tn-btn-ghost' });
       reopenBtn.addEventListener('click', async () => {
         doc.completed = false;
@@ -233,7 +257,7 @@ export class DocumentsView extends ItemView {
         new Notice('Документ возобновлён');
         this.renderDocumentDetail(doc);
       });
-    } else {
+    } else if (this.canEdit) {
       const completeBtn = btnRow.createEl('button', { text: '✅ Завершить', cls: 'tn-btn tn-btn-ghost' });
       completeBtn.addEventListener('click', async () => {
         doc.completed = true;
@@ -244,8 +268,10 @@ export class DocumentsView extends ItemView {
       });
     }
 
-    const editBtn = btnRow.createEl('button', { text: '✏️ Редактировать', cls: 'tn-btn tn-btn-ghost' });
-    editBtn.addEventListener('click', () => this.showEditForm(doc));
+    if (this.canEdit) {
+      const editBtn = btnRow.createEl('button', { text: '✏️ Редактировать', cls: 'tn-btn tn-btn-ghost' });
+      editBtn.addEventListener('click', () => this.showEditForm(doc));
+    }
   }
 
   private showCreateForm(parentDoc?: DocItem): void {

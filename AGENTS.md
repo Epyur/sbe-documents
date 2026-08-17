@@ -45,6 +45,27 @@ SBE-плагин «Документы»: локальная БД-кэш доку
 
 ## История работ
 
+### 2026-08-17 — v0.1.4 (Этап 5: роли + общий доступ; фикс дублей миграции)
+- **Расширенная модель ролей**: `viewer` < `commenter` < `editor` < `admin`. Сервер
+  (documents-service): `effectiveRole`, таблица `documents_common_access`, миграция
+  `user`→`editor`. Endpoints: push/file→editor, pull/download→viewer, remark-file→commenter,
+  + `GET/POST /api/documents/common-access`.
+- **Общий доступ**: в настройках «Права доступа» — селектор уровня + таблица ролей (4 роли,
+  «✖ Убрать»). UI учитывает роль: добавление/редактирование — editor+, замечания — commenter+.
+- **Фикс дублей миграции**: `migrateLegacyOnce` теперь одноразовая через флаг `legacyMigrated`
+  в настройках; `importLegacy` пропускает записи с тем же содержимым (title + link/file),
+  а не только по id. Причина дублей: миграция генерировала новые случайные id при каждом
+  запуске плагина и повторно добавляла все 5 legacy-документов. Очищены дубликаты на сервере
+  и в кэше (оставлены 5 оригинальных). `data.json` → `legacyMigrated: true`.
+- Версия 0.1.3 → **0.1.4** (manifest + package.json). tsc EXIT=0, build OK.
+
+### 2026-08-17 — v0.1.3 (Этап 5: Права доступа)
+- Настройки: раздел «Права доступа» — для admin таблица ролей (смена user↔admin, добавление
+  по email), для user — «Ваша роль: …», без доступа — подсказка.
+- `sync.service.ts`: `getMyPermission`, `listPermissions`, `setPermission`.
+- Сервер (documents-service): `/api/documents/permissions/me|list|set` (см. server_back/documents-service).
+- Версия 0.1.2 → **0.1.3** (manifest + package.json). tsc EXIT=0, build OK.
+
 ### 2026-08-17 — v0.1.2 (типы документов: создание из UI)
 - Кнопка «➕ Создать тип документа» в формах создания и редактирования —
   добавляет тип в локальный `doc_types[]` (метод `createDocTypeFromField`, DB `addDocType`),

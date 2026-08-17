@@ -135,12 +135,16 @@ export class DocumentsDatabase {
     }
   }
 
-  /** Импорт из легаси-задач YouGile (одноразовая миграция). */
+  /** Импорт из легаси-задач YouGile (одноразовая миграция).
+   *  Устойчив к повторным запускам: пропускает записи с тем же id ИЛИ тем же
+   *  содержимым (title + link_url/file_name), чтобы не плодить дубликаты. */
   importLegacy(docs: DocItem[]): number {
     const now = new Date().toISOString();
     let added = 0;
+    const existingKeys = new Set(this.data.documents.map(d => this.contentKey(d)));
     for (const d of docs) {
       if (this.getById(d.id)) continue;
+      if (existingKeys.has(this.contentKey(d))) continue;
       this.data.documents.push({
         ...d,
         remarks: Array.isArray(d.remarks) ? d.remarks : [],
@@ -149,9 +153,15 @@ export class DocumentsDatabase {
         updated_at: d.updated_at || d.created_at || now,
       });
       this.rememberDocType(d.doc_type);
+      existingKeys.add(this.contentKey(d));
       added++;
     }
     return added;
+  }
+
+  /** Ключ содержимого для дедупликации миграции (title + ссылка/файл). */
+  private contentKey(d: DocItem): string {
+    return `${(d.title || '').trim().toLowerCase()}|${(d.link_url || d.file_name || '').trim().toLowerCase()}`;
   }
 
   private compareTime(a: string, b: string): number {
