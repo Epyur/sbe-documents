@@ -45,6 +45,12 @@ SBE-плагин «Документы»: локальная БД-кэш доку
 
 ## История работ
 
+### 2026-08-17 — v0.1.1 (источник реестра)
+- `sbe-core`: `DEFAULT_REGISTRY_URL` → `https://epyur.fvds.ru/registry.json`
+  (raw.githubusercontent.com отдавал 429). Пересборка `main.js`, исходники не менялись.
+- Версия 0.1.0 → **0.1.1** (manifest + package.json).
+- `npx tsc --noEmit` EXIT=0; `npm run build` OK.
+
 ### 2026-08-17 — v0.1.0 (создание)
 - Плагин вынесен из монолита `yougile-tntn` (модуль «Документы», `ui/documents-view.ts`),
   переведён с YouGile на локальную БД + documents-service + S3. Скаффолд как sbe-mailer.
