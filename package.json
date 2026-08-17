@@ -1,0 +1,19 @@
+{
+  "name": "sbe-documents",
+  "version": "0.1.0",
+  "description": "Модуль документов как SBE-плагин: локальная БД yourbase/sbe_documents/, синхронизация с documents-service через JWT из ЦУП, файлы в S3.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.11.4",
+    "typescript": "^5.8.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

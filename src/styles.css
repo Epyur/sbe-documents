@@ -1,0 +1,131 @@
+/* Классы вьюхи документов (tn-doc-*) на семантических токенах дизайн-системы SBE. */
+
+.tn-doc-container {
+  padding: 12px;
+}
+
+.tn-doc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.tn-doc-header h3 {
+  margin: 0;
+  margin-right: auto;
+  font-size: 18px;
+}
+
+.tn-doc-input,
+.tn-doc-textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tn-doc-textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.tn-doc-label {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tn-doc-mb8 {
+  margin-bottom: 8px;
+}
+
+.tn-doc-mb12 {
+  margin-bottom: 12px;
+}
+
+.tn-doc-mt12 {
+  margin-top: 12px;
+}
+
+.tn-doc-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: var(--font-smaller);
+}
+
+.tn-doc-filter-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--content-primary-a-enabled);
+}
+
+.tn-doc-cb {
+  width: 16px;
+  height: 16px;
+  margin: 0 4px 0 0;
+  flex-shrink: 0;
+}
+
+.tn-doc-meta {
+  color: var(--content-secondary-enabled);
+  font-size: var(--font-smaller);
+}
+
+.tn-doc-center {
+  text-align: center;
+}
+
+.tn-doc-p24 {
+  padding: 24px;
+}
+
+.tn-doc-row {
+  cursor: pointer;
+}
+
+.tn-doc-row:hover {
+  background: var(--background-secondary-hover);
+}
+
+.tn-doc-link {
+  color: var(--content-accent-enabled);
+  cursor: pointer;
+}
+
+.tn-doc-img {
+  max-width: 100%;
+  max-height: 300px;
+  margin-top: 8px;
+}
+
+.tn-doc-clickable {
+  cursor: pointer;
+  margin-top: 4px;
+  color: var(--content-accent-enabled);
+}
+
+.tn-doc-clickable:hover {
+  text-decoration: underline;
+}
+
+.tn-doc-green {
+  color: var(--content-system-positive);
+}
+
+.tn-doc-red {
+  color: var(--content-system-negative);
+}
+
+.tn-doc-orange {
+  color: var(--content-system-warning);
+}
+
+.tn-doc-bold {
+  font-weight: 700;
+}
