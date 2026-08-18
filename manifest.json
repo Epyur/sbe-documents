@@ -1,7 +1,7 @@
 {
   "id": "sbe-documents",
   "name": "Документы",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "minAppVersion": "1.11.4",
   "description": "Модуль документов как SBE-плагин: локальная БД yourbase/sbe_documents/, синхронизация с documents-service через JWT из ЦУП, файлы в S3.",
   "author": "Полищук Евгений (polishchuk@tn.ru)",
