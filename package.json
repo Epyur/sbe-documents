@@ -1,6 +1,6 @@
 {
   "name": "sbe-documents",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Модуль документов как SBE-плагин: локальная БД yourbase/sbe_documents/, синхронизация с documents-service через JWT из ЦУП, файлы в S3.",
   "main": "main.js",
   "scripts": {

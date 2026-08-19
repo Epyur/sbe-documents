@@ -1,13 +1,33 @@
-import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, WorkspaceLeaf, FileSystemAdapter } from 'obsidian';
 import type SbeDocumentsPlugin from '../main';
 import type { DocItem, DocumentRemark } from '../types/documents';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 export const SBE_DOCUMENTS_VIEW_TYPE = 'sbe-documents-view';
 
+type NavKey = 'documents';
+
+const PAGE_META: Record<NavKey, { title: string; sub: string }> = {
+  documents: { title: 'Все документы', sub: 'Реестр документов' },
+};
+
+/** Расширения, которые Obsidian открывает встроенным просмотрщиком. */
+const OBSIDIAN_VIEWABLE = new Set([
+  'md', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'txt', 'csv', 'html', 'htm',
+]);
+
 export class DocumentsView extends ItemView {
   plugin: SbeDocumentsPlugin;
-  private containerElContent!: HTMLElement;
+  private rootEl!: HTMLElement;
+  private navEl!: HTMLElement;
+  private filtersEl!: HTMLElement;
+  private pageTitleEl!: HTMLElement;
+  private pageSubEl!: HTMLElement;
+  private crumbEl!: HTMLElement;
+  private collapseLabel!: HTMLElement;
+  private bodyEl!: HTMLElement;
+  private key: NavKey = 'documents';
+  private collapsed = false;
   private selectedDocTypes: Set<string> = new Set();
   private searchQuery = '';
   private searchTimeout: number | null = null;
@@ -23,7 +43,7 @@ export class DocumentsView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Документы';
+    return 'LogicTEAM.Документы';
   }
 
   getIcon(): string {
@@ -33,7 +53,8 @@ export class DocumentsView extends ItemView {
   async onOpen(): Promise<void> {
     const container = this.contentEl;
     container.addClass('tn-doc-container');
-    this.containerElContent = container.createDiv();
+    this.rootEl = container.createDiv({ cls: 'tn-doc-app' });
+
     try {
       const me = await this.plugin.syncService.getMyPermission();
       this.myRole = me.hasAccess ? me.role : '';
@@ -41,7 +62,149 @@ export class DocumentsView extends ItemView {
       console.warn('Документы: не удалось получить роль:', errorMessage(e));
       this.myRole = '';
     }
-    await this.syncAndRender();
+
+    this.buildShell();
+    this.syncNavActive();
+    this.renderPage();
+  }
+
+  refresh(): void {
+    this.renderPage();
+  }
+
+  // ---- Каркас ----
+
+  private buildShell(): void {
+    // шапка
+    const topbar = this.rootEl.createDiv({ cls: 'tn-doc-topbar' });
+    topbar.createDiv({ cls: 'tn-doc-module-title', text: 'LogicTEAM.Документы' });
+    this.crumbEl = topbar.createDiv({ cls: 'tn-doc-crumb' });
+    const spacer = topbar.createDiv({ cls: 'tn-doc-spacer' });
+    spacer.empty();
+    if (this.canEdit) {
+      const createBtn = topbar.createEl('button', { text: '＋ Создать', cls: 'tn-doc-create' });
+      createBtn.addEventListener('click', () => this.showCreateForm());
+    }
+
+    // главная область: сайдбар + контент
+    const main = this.rootEl.createDiv({ cls: 'tn-doc-main' });
+
+    const sidebar = main.createDiv({ cls: 'tn-doc-sidebar' });
+
+    // сворачивание
+    const collapseBtn = sidebar.createDiv({ cls: 'tn-doc-collapse' });
+    collapseBtn.createSpan({ text: '▧' });
+    this.collapseLabel = collapseBtn.createSpan({ cls: 'tn-doc-collapse-lbl', text: 'Свернуть' });
+    collapseBtn.addEventListener('click', () => this.toggleCollapse());
+
+    // дерево навигации + фильтры по типам
+    this.navEl = sidebar.createDiv({ cls: 'tn-doc-nav' });
+    this.buildNav();
+
+    // панель управления: синхронизация и экспорт HTML
+    const actions = sidebar.createDiv({ cls: 'tn-doc-sidebar-actions' });
+    const syncBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
+    syncBtn.createSpan({ text: '🔄' });
+    syncBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Синхронизация' });
+    syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
+    const exportBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
+    exportBtn.createSpan({ text: '📄' });
+    exportBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Экспорт HTML' });
+    exportBtn.addEventListener('click', () => { void this.exportHtml(); });
+
+    const content = main.createDiv({ cls: 'tn-doc-content' });
+    this.pageTitleEl = content.createEl('h1', { cls: 'tn-doc-page-title' });
+    this.pageSubEl = content.createDiv({ cls: 'tn-doc-page-sub' });
+    this.bodyEl = content.createDiv();
+  }
+
+  private buildNav(): void {
+    this.navEl.empty();
+
+    // Группа «Документы»
+    const docGroup = this.navEl.createEl('button', { cls: 'tn-doc-grp' });
+    docGroup.createSpan({ cls: 'tn-doc-grp-ico', text: '📄' });
+    docGroup.createSpan({ cls: 'tn-doc-grp-lbl', text: 'Документы' });
+    docGroup.createSpan({ cls: 'tn-doc-grp-chev', text: '▶' });
+    docGroup.addEventListener('click', () => {
+      docGroup.classList.toggle('open');
+      docGroup.classList.toggle('active');
+    });
+    const docSubmenu = this.navEl.createDiv({ cls: 'tn-doc-submenu' });
+    const allDocs = docSubmenu.createEl('a', { cls: 'tn-doc-nav-item', attr: { href: '#' } });
+    allDocs.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Все документы' });
+    allDocs.dataset.key = 'documents';
+    allDocs.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      this.key = 'documents';
+      this.syncNavActive();
+      this.renderPage();
+    });
+    docGroup.classList.add('open', 'active');
+
+    // Группа «Фильтры» — чекбоксы типов документов
+    const filterGroup = this.navEl.createEl('button', { cls: 'tn-doc-grp' });
+    filterGroup.createSpan({ cls: 'tn-doc-grp-ico', text: '🔍' });
+    filterGroup.createSpan({ cls: 'tn-doc-grp-lbl', text: 'Фильтры' });
+    filterGroup.createSpan({ cls: 'tn-doc-grp-chev', text: '▶' });
+    filterGroup.addEventListener('click', () => {
+      filterGroup.classList.toggle('open');
+      filterGroup.classList.toggle('active');
+    });
+    this.filtersEl = this.navEl.createDiv({ cls: 'tn-doc-submenu tn-doc-filters-nav' });
+    filterGroup.classList.add('open');
+    this.renderSidebarFilters();
+
+    this.syncNavActive();
+  }
+
+  /** Чекбоксы фильтров по типам документов (в группе «Фильтры» сайдбара). */
+  private renderSidebarFilters(): void {
+    if (!this.filtersEl) return;
+    this.filtersEl.empty();
+    const types = this.plugin.documentsDb.getDocTypes();
+    if (types.length === 0) {
+      this.filtersEl.createDiv({ cls: 'tn-doc-nav-empty' }).setText('Типов пока нет');
+      return;
+    }
+    for (const t of types) {
+      const wrapper = this.filtersEl.createEl('label', { cls: 'tn-doc-filter-label tn-doc-sidebar-filter' });
+      const cb = wrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb' });
+      cb.checked = this.selectedDocTypes.has(t);
+      cb.addEventListener('change', () => {
+        if (cb.checked) this.selectedDocTypes.add(t);
+        else this.selectedDocTypes.delete(t);
+        this.renderPage();
+      });
+      wrapper.createEl('span').setText(t);
+    }
+  }
+
+  private toggleCollapse(): void {
+    this.collapsed = !this.collapsed;
+    this.rootEl.classList.toggle('collapsed', this.collapsed);
+    if (this.collapseLabel) {
+      this.collapseLabel.setText(this.collapsed ? 'Развернуть' : 'Свернуть');
+    }
+  }
+
+  private syncNavActive(): void {
+    this.navEl.querySelectorAll('.tn-doc-nav-item').forEach((el) => {
+      const navEl = el as HTMLElement;
+      navEl.classList.toggle('active', navEl.dataset.key === this.key);
+    });
+  }
+
+  // ---- Страница ----
+
+  private renderPage(): void {
+    const meta = PAGE_META[this.key];
+    this.crumbEl.setText(meta.title);
+    this.pageTitleEl.setText(meta.title);
+    this.pageSubEl.setText(meta.sub);
+
+    this.bodyEl.empty();
+    this.renderDocumentsView();
   }
 
   /** Роль editor/admin — можно создавать/редактировать документы. */
@@ -54,24 +217,11 @@ export class DocumentsView extends ItemView {
     return this.myRole === 'commenter' || this.myRole === 'editor' || this.myRole === 'admin';
   }
 
-  refresh(): void {
-    this.renderView();
-  }
+  // ---- Список: карточки с вложенными связанными документами ----
 
-  private renderView(): void {
-    const container = this.containerElContent;
+  private renderDocumentsView(): void {
+    const container = this.bodyEl;
     container.empty();
-
-    const header = container.createDiv({ cls: 'tn-doc-header' });
-    header.createEl('h3', { text: '📄 Документы' });
-    if (this.canEdit) {
-      const createBtn = header.createEl('button', { text: '➕ Добавить документ', cls: 'tn-btn tn-btn-primary' });
-      createBtn.addEventListener('click', () => this.showCreateForm());
-    }
-    const syncBtn = header.createEl('button', { text: '🔄', cls: 'tn-btn tn-btn-ghost' });
-    syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
-    const exportBtn = header.createEl('button', { text: '📄 Экспорт HTML', cls: 'tn-btn tn-btn-ghost' });
-    exportBtn.addEventListener('click', () => { void this.exportHtml(); });
 
     const searchInput = container.createEl('input', {
       attr: { type: 'text', placeholder: '🔍 Поиск по названию...' },
@@ -81,93 +231,136 @@ export class DocumentsView extends ItemView {
     searchInput.addEventListener('input', () => {
       this.searchQuery = searchInput.value;
       if (this.searchTimeout) window.clearTimeout(this.searchTimeout);
-      this.searchTimeout = window.setTimeout(() => this.renderView(), 400);
+      this.searchTimeout = window.setTimeout(() => this.renderDocumentsView(), 400);
     });
 
-    const docTypes = this.plugin.documentsDb.getDocTypes();
-    if (docTypes.length > 0) {
-      const filterDiv = container.createDiv({ cls: 'tn-doc-filters tn-doc-mb8' });
-      filterDiv.createDiv({ text: 'Типы:', cls: 'tn-doc-meta' });
-      for (const t of docTypes) {
-        const wrapper = filterDiv.createEl('label', { cls: 'tn-doc-filter-label' });
-        const cb = wrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb' });
-        cb.checked = this.selectedDocTypes.has(t);
-        cb.addEventListener('change', () => {
-          if (cb.checked) this.selectedDocTypes.add(t);
-          else this.selectedDocTypes.delete(t);
-          this.renderView();
-        });
-        wrapper.createEl('span').setText(` ${t}`);
+    const all = this.plugin.documentsDb.getAll();
+    const ids = new Set(all.map(d => d.id));
+    // Дерево: дети по parent_id, корни — документы без привязки.
+    const byParent = new Map<number, DocItem[]>();
+    const roots: DocItem[] = [];
+    for (const d of all) {
+      if (d.parent_id > 0 && ids.has(d.parent_id)) {
+        const list = byParent.get(d.parent_id) || [];
+        list.push(d);
+        byParent.set(d.parent_id, list);
+      } else {
+        roots.push(d);
       }
     }
+    // Порядок вывода карточек — по порядку добавления в архив (по id).
+    const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
+    roots.sort(byId);
+    for (const list of byParent.values()) list.sort(byId);
 
-    let docs = this.plugin.documentsDb.getAll();
     const q = this.searchQuery.trim().toLowerCase();
-    if (q) docs = docs.filter(d => d.title.toLowerCase().includes(q));
-    if (this.selectedDocTypes.size > 0) docs = docs.filter(d => this.selectedDocTypes.has(d.doc_type));
-    docs.sort((a, b) => (b.deadline || 0) - (a.deadline || 0));
+    const visible = roots.filter(r => this.subtreeMatches(r, byParent, q));
 
-    const table = container.createEl('table', { cls: 'tn-table' });
-    const thead = table.createEl('thead');
-    const headerRow = thead.createEl('tr');
-    const headers = ['Наименование', 'Тип документа', 'Куратор', 'Срок действия', 'Файл', 'Статус'];
-    for (const h of headers) headerRow.createEl('th').setText(h);
-
-    const tbody = table.createEl('tbody');
-    if (docs.length === 0) {
-      const emptyRow = tbody.createEl('tr');
-      const td = emptyRow.createEl('td', { cls: 'tn-doc-center tn-doc-p24' });
-      td.setAttr('colspan', '6');
-      td.setText('Нет документов');
+    if (visible.length === 0) {
+      container.createDiv({ cls: 'tn-doc-meta tn-doc-p24' }).setText('Нет документов');
       return;
     }
 
-    for (const doc of docs) {
-      const row = tbody.createEl('tr', { cls: 'tn-doc-row' });
-      row.addEventListener('click', () => this.renderDocumentDetail(doc));
-
-      row.createEl('td').setText(doc.title);
-      row.createEl('td').setText(doc.doc_type || '—');
-      row.createEl('td').setText(doc.curator_email || '—');
-
-      const deadlineCell = row.createEl('td');
-      if (doc.deadline) {
-        deadlineCell.setText(new Date(doc.deadline).toLocaleDateString());
-        const daysLeft = Math.ceil((doc.deadline - Date.now()) / 86400000);
-        if (doc.completed) {
-          deadlineCell.addClass('tn-doc-green');
-        } else if (daysLeft < 0) {
-          deadlineCell.addClass('tn-doc-red');
-          deadlineCell.addClass('tn-doc-bold');
-        } else if (daysLeft <= 7) {
-          deadlineCell.addClass('tn-doc-orange');
-        } else {
-          deadlineCell.addClass('tn-doc-green');
-        }
-      } else {
-        deadlineCell.setText('—');
-      }
-
-      const fileCell = row.createEl('td');
-      if (doc.file_url || doc.link_url) {
-        const label = doc.file_name || doc.link_file_name || 'Ссылка';
-        fileCell.setText(label);
-        fileCell.addClass('tn-doc-link');
-      } else {
-        fileCell.setText('—');
-      }
-
-      const statusCell = row.createEl('td');
-      statusCell.setText(doc.completed ? '✅ Завершён' : '🟢 Активен');
+    for (const r of visible) {
+      this.renderCard(r, byParent, container);
     }
   }
 
+  /** Совпадение документа с поиском и выбранными типами. */
+  private matches(d: DocItem, q: string): boolean {
+    const qOk = !q || d.title.toLowerCase().includes(q);
+    const tOk = this.selectedDocTypes.size === 0 || this.selectedDocTypes.has(d.doc_type);
+    return qOk && tOk;
+  }
+
+  /** Карточка показывается, если сам документ или любой вложенный совпал с фильтрами. */
+  private subtreeMatches(d: DocItem, byParent: Map<number, DocItem[]>, q: string): boolean {
+    if (this.matches(d, q)) return true;
+    const kids = byParent.get(d.id) || [];
+    return kids.some(k => this.subtreeMatches(k, byParent, q));
+  }
+
+  private renderCard(doc: DocItem, byParent: Map<number, DocItem[]>, container: HTMLElement): void {
+    const card = container.createDiv({ cls: 'tn-doc-card' });
+    const head = card.createDiv({ cls: 'tn-doc-card-head' });
+    const titleEl = head.createEl('h4', { text: doc.title || 'Без названия' });
+    titleEl.addClass('tn-doc-card-title');
+    if (doc.completed) titleEl.addClass('tn-doc-completed');
+    if (doc.deadline) {
+      const daysLeft = Math.ceil((doc.deadline - Date.now()) / 86400000);
+      const chipCls = doc.completed
+        ? 'tn-doc-chip-green'
+        : daysLeft < 0 ? 'tn-doc-chip-red' : daysLeft <= 7 ? 'tn-doc-chip-orange' : 'tn-doc-chip-green';
+      head.createSpan({ cls: `tn-doc-chip ${chipCls}`, text: new Date(doc.deadline).toLocaleDateString() });
+    }
+
+    const metaParts: string[] = [];
+    if (doc.doc_type) metaParts.push(`📂 ${doc.doc_type}`);
+    if (doc.curator_email) metaParts.push(`👤 ${doc.curator_email}`);
+    metaParts.push(doc.completed ? '✅ Завершён' : '🟢 Активен');
+    card.createDiv({ cls: 'tn-doc-card-meta', text: metaParts.join(' · ') });
+
+    if (doc.file_key) {
+      const fileBtn = card.createEl('a', { attr: { href: '#' }, cls: 'tn-doc-card-file' });
+      fileBtn.setText(`📎 ${doc.file_name || 'Скачать'}`);
+      fileBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.downloadAndOpen(doc.file_key, doc.file_name || 'file');
+      });
+    } else if (doc.link_url) {
+      const extLink = card.createEl('a', { href: doc.link_url, attr: { target: '_blank' }, cls: 'tn-doc-card-file' });
+      extLink.setText(`🔗 ${doc.link_file_name || 'Ссылка'}`);
+      extLink.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    const kids = byParent.get(doc.id) || [];
+    if (kids.length > 0) {
+      const list = card.createDiv({ cls: 'tn-doc-card-children' });
+      for (const k of kids) this.renderChildItem(k, byParent, list);
+    }
+
+    card.addEventListener('click', (e) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'A' || tag === 'INPUT') return;
+      this.renderDocumentDetail(doc);
+    });
+  }
+
+  private renderChildItem(doc: DocItem, byParent: Map<number, DocItem[]>, host: HTMLElement): void {
+    const item = host.createDiv({ cls: 'tn-doc-child-item' });
+    const title = item.createEl('span', { text: doc.title || 'Без названия' });
+    title.addClass('tn-doc-child-title');
+    if (doc.completed) title.addClass('tn-doc-completed');
+    if (doc.file_key) {
+      const dl = item.createEl('a', { attr: { href: '#', title: 'Скачать файл' }, cls: 'tn-doc-child-file' });
+      dl.setText('📎');
+      dl.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.downloadAndOpen(doc.file_key, doc.file_name || 'file');
+      });
+    }
+    item.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).tagName === 'A') return;
+      this.renderDocumentDetail(doc);
+    });
+
+    const kids = byParent.get(doc.id) || [];
+    if (kids.length > 0) {
+      const nested = host.createDiv({ cls: 'tn-doc-child-nested' });
+      for (const k of kids) this.renderChildItem(k, byParent, nested);
+    }
+  }
+
+  // ---- Карточка документа (детали) ----
+
   private renderDocumentDetail(doc: DocItem): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
-    backBtn.addEventListener('click', () => this.renderView());
+    backBtn.addEventListener('click', () => this.renderDocumentsView());
 
     container.createEl('h3', { text: doc.title });
 
@@ -176,18 +369,20 @@ export class DocumentsView extends ItemView {
     meta.createDiv({ text: `👤 Куратор: ${doc.curator_email || '—'}` });
     if (doc.deadline) meta.createDiv({ text: `📅 Срок действия: ${new Date(doc.deadline).toLocaleDateString()}` });
     meta.createDiv({ text: `✅ Статус: ${doc.completed ? 'Завершён' : 'Активен'}` });
+    if (doc.parent_id > 0) {
+      const parent = this.plugin.documentsDb.getById(doc.parent_id);
+      meta.createDiv({ text: `📎 Входит в: ${parent ? parent.title : '—'}` });
+    }
 
-    if (doc.file_url) {
+    if (doc.file_key) {
       const linkDiv = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb12' });
       linkDiv.createDiv({ text: 'Файл документа:' });
-      const a = linkDiv.createEl('a', { href: doc.file_url, attr: { target: '_blank' } });
+      const a = linkDiv.createEl('a', { attr: { href: '#' } });
       a.setText(doc.file_name || 'Скачать');
-      const ext = (doc.file_name || '').toLowerCase().split('.').pop() || '';
-      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
-      if (isImage) {
-        linkDiv.createEl('br');
-        linkDiv.createEl('img', { attr: { src: doc.file_url, alt: doc.file_name } }).addClass('tn-doc-img');
-      }
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        void this.downloadAndOpen(doc.file_key, doc.file_name || 'file');
+      });
     } else if (doc.link_url) {
       const linkDiv = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb12' });
       linkDiv.createDiv({ text: 'Ссылка на документ:' });
@@ -226,7 +421,12 @@ export class DocumentsView extends ItemView {
         const fileCell = row.createEl('td');
         if (r.files && r.files.length > 0) {
           for (const f of r.files) {
-            fileCell.createEl('a', { href: f.file_url, attr: { target: '_blank' } }).setText(f.file_name);
+            const a = fileCell.createEl('a', { attr: { href: '#' } });
+            a.setText(f.file_name);
+            a.addEventListener('click', (ev) => {
+              ev.preventDefault();
+              void this.downloadAndOpen(f.file_key, f.file_name || 'file');
+            });
             fileCell.createEl('br');
           }
         } else {
@@ -239,8 +439,10 @@ export class DocumentsView extends ItemView {
     const btnRow = container.createDiv({ cls: 'tn-doc-header tn-doc-mt12' });
 
     if (this.canEdit) {
-      const relatedBtn = btnRow.createEl('button', { text: '🔗 Связанный документ', cls: 'tn-btn tn-btn-ghost' });
-      relatedBtn.addEventListener('click', () => this.showCreateRelatedForm(doc));
+      const attachBtn = btnRow.createEl('button', { text: '🔗 Привязать документы', cls: 'tn-btn tn-btn-ghost' });
+      attachBtn.addEventListener('click', () => this.renderAttachPicker(doc));
+      const relatedBtn = btnRow.createEl('button', { text: '➕ Связанный документ', cls: 'tn-btn tn-btn-ghost' });
+      relatedBtn.addEventListener('click', () => this.showCreateForm(doc));
     }
 
     if (this.canComment) {
@@ -272,14 +474,129 @@ export class DocumentsView extends ItemView {
       const editBtn = btnRow.createEl('button', { text: '✏️ Редактировать', cls: 'tn-btn tn-btn-ghost' });
       editBtn.addEventListener('click', () => this.showEditForm(doc));
     }
+
+    if (this.canEdit && doc.parent_id > 0) {
+      const detachBtn = btnRow.createEl('button', { text: '⤴ Отвязать (сделать самостоятельным)', cls: 'tn-btn tn-btn-ghost' });
+      detachBtn.addEventListener('click', async () => {
+        doc.parent_id = 0;
+        doc.sync_status = 'local';
+        doc.updated_at = new Date().toISOString();
+        await this.plugin.documentsDb.save();
+        new Notice('Документ отвязан');
+        this.renderDocumentsView();
+      });
+    }
   }
 
+  /** Пикер привязки существующих документов как связанных к текущему. */
+  private renderAttachPicker(doc: DocItem): void {
+    const container = this.bodyEl;
+    const all = this.plugin.documentsDb.getAll();
+    const ids = new Set(all.map(d => d.id));
+    // Привязывать можно только «свободные» документы (собственные карточки).
+    const attachable = all.filter(d => d.id !== doc.id && (d.parent_id <= 0 || !ids.has(d.parent_id)));
+    const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
+    attachable.sort(byId);
+
+    const picker = container.createDiv({ cls: 'tn-doc-card tn-doc-attach-picker' });
+    picker.createEl('h4', { text: '🔗 Привязать документы' });
+    const back = picker.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost tn-doc-mb8' });
+    back.addEventListener('click', () => this.renderDocumentDetail(doc));
+
+    if (attachable.length === 0) {
+      picker.createDiv({ cls: 'tn-doc-meta' }).setText('Нет доступных документов для привязки');
+      return;
+    }
+
+    const checks: HTMLInputElement[] = [];
+    const list = picker.createDiv({ cls: 'tn-doc-attach-opts' });
+    for (const d of attachable) {
+      const wrapper = list.createEl('label', { cls: 'tn-doc-filter-label' });
+      const cb = wrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb' });
+      wrapper.createEl('span').setText(`${d.title}${d.doc_type ? ' — ' + d.doc_type : ''}`);
+      checks.push(cb);
+    }
+
+    const okBtn = picker.createEl('button', { text: 'Привязать', cls: 'tn-btn tn-btn-primary tn-doc-mt12' });
+    okBtn.addEventListener('click', async () => {
+      const selected = attachable.filter((d, i) => checks[i].checked);
+      if (selected.length === 0) {
+        new Notice('Выберите документы для привязки');
+        return;
+      }
+      const now = new Date().toISOString();
+      for (const s of selected) {
+        s.parent_id = doc.id;
+        s.sync_status = 'local';
+        s.updated_at = now;
+        this.plugin.documentsDb.update(s.id, s);
+      }
+      await this.plugin.documentsDb.save();
+      new Notice(`Привязано документов: ${selected.length}`);
+      this.renderDocumentDetail(doc);
+    });
+    const cancelBtn = picker.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost tn-doc-mt12' });
+    cancelBtn.addEventListener('click', () => this.renderDocumentDetail(doc));
+  }
+
+  // ---- Скачивание и открытие файлов ----
+
+  /** Скачивает файл из S3 через сервис, сохраняет в хранилище вольта и открывает. */
+  private async downloadAndOpen(fileKey: string, fileName: string): Promise<void> {
+    try {
+      const data = await this.plugin.syncService.downloadFile(fileKey);
+      const dir = 'yourbase/sbe_documents/files';
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(dir))) {
+        await adapter.mkdir(dir);
+      }
+      const safeName = this.sanitizeFileName(fileName);
+      const path = `${dir}/${safeName}`;
+      await adapter.writeBinary(path, data);
+      new Notice(`Файл «${safeName}» скачан в хранилище`);
+      await this.openLocalFile(path, fileName);
+    } catch (e: unknown) {
+      new Notice(`Ошибка скачивания файла: ${errorMessage(e)}`);
+    }
+  }
+
+  /** Открывает локальный файл: Obsidian (встроенные типы) или системное приложение. */
+  private async openLocalFile(path: string, fileName: string): Promise<void> {
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    if (OBSIDIAN_VIEWABLE.has(ext)) {
+      await this.app.workspace.openLinkText(path, '');
+      return;
+    }
+    try {
+      const adapter = this.app.vault.adapter;
+      if (!(adapter instanceof FileSystemAdapter)) {
+        new Notice(`Файл сохранён: ${path}`);
+        return;
+      }
+      const fullPath = adapter.getFullPath(path);
+      const { shell } = require('electron');
+      const err = await shell.openPath(fullPath);
+      if (err) {
+        new Notice(`Не удалось открыть системным приложением: ${err}`);
+      }
+    } catch (e: unknown) {
+      new Notice(`Файл сохранён: ${path} (${errorMessage(e)})`);
+    }
+  }
+
+  private sanitizeFileName(name: string): string {
+    const cleaned = (name || 'file').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim();
+    return cleaned || 'file';
+  }
+
+  // ---- Формы ----
+
   private showCreateForm(parentDoc?: DocItem): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
-    backBtn.addEventListener('click', () => parentDoc ? this.renderDocumentDetail(parentDoc) : this.renderView());
+    backBtn.addEventListener('click', () => parentDoc ? this.renderDocumentDetail(parentDoc) : this.renderDocumentsView());
 
     container.createEl('h3', { text: parentDoc ? `Связанный документ: ${parentDoc.title}` : '✉️ Новый документ' });
 
@@ -320,10 +637,34 @@ export class DocumentsView extends ItemView {
     const linkLabel = container.createEl('label', { text: 'Ссылка на документ (если без файла)', cls: 'tn-doc-label' });
     const linkInput = container.createEl('input', { attr: { type: 'url', placeholder: 'https://...' }, cls: 'tn-doc-input' });
 
+    // Привязка существующих документов как связанных к новому (только при создании
+    // самостоятельного документа; для связанного — используйте «🔗 Привязать документы»).
+    const attachChecks: HTMLInputElement[] = [];
+    let attachable: DocItem[] = [];
+    if (!parentDoc) {
+      const attachLabel = container.createEl('label', { text: '🔗 Привязать существующие документы (станут связанными)', cls: 'tn-doc-label' });
+      const all = this.plugin.documentsDb.getAll();
+      const ids = new Set(all.map(d => d.id));
+      attachable = all.filter(d => d.parent_id <= 0 || !ids.has(d.parent_id));
+      const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
+      attachable.sort(byId);
+      const attachDiv = container.createDiv({ cls: 'tn-doc-attach-opts tn-doc-mb12' });
+      if (attachable.length > 0) {
+        for (const d of attachable) {
+          const wrapper = attachDiv.createEl('label', { cls: 'tn-doc-filter-label' });
+          const cb = wrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb' });
+          wrapper.createEl('span').setText(`${d.title}${d.doc_type ? ' — ' + d.doc_type : ''}`);
+          attachChecks.push(cb);
+        }
+      } else {
+        attachDiv.createDiv({ cls: 'tn-doc-meta' }).setText('Нет документов для привязки');
+      }
+    }
+
     const btnRow = container.createDiv({ cls: 'tn-doc-header tn-doc-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
     const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
-    cancelBtn.addEventListener('click', () => parentDoc ? this.renderDocumentDetail(parentDoc) : this.renderView());
+    cancelBtn.addEventListener('click', () => parentDoc ? this.renderDocumentDetail(parentDoc) : this.renderDocumentsView());
 
     saveBtn.addEventListener('click', async () => {
       const title = titleInput.value.trim();
@@ -368,9 +709,19 @@ export class DocumentsView extends ItemView {
         };
 
         this.plugin.documentsDb.add(docItem);
+        const attachNow = new Date().toISOString();
+        attachChecks.forEach((cb, i) => {
+          if (cb.checked) {
+            const target = attachable[i];
+            target.parent_id = docItem.id;
+            target.sync_status = 'local';
+            target.updated_at = attachNow;
+            this.plugin.documentsDb.update(target.id, target);
+          }
+        });
         await this.plugin.documentsDb.save();
         new Notice('Документ сохранён (будет отправлен на сервер при синхронизации)');
-        this.renderView();
+        this.renderDocumentsView();
       } catch (e: unknown) {
         new Notice(`Ошибка: ${errorMessage(e)}`);
         saveBtn.setText('💾 Сохранить');
@@ -380,12 +731,8 @@ export class DocumentsView extends ItemView {
     });
   }
 
-  private showCreateRelatedForm(parentDoc: DocItem): void {
-    this.showCreateForm(parentDoc);
-  }
-
   private showEditForm(doc: DocItem): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -440,7 +787,7 @@ export class DocumentsView extends ItemView {
   }
 
   private showRemarkForm(doc: DocItem): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -538,6 +885,7 @@ export class DocumentsView extends ItemView {
     const added = this.plugin.documentsDb.addDocType(name);
     await this.plugin.documentsDb.save();
     this.renderDocTypeDatalist(typeInput);
+    this.renderSidebarFilters();
     if (added) {
       new Notice(`Тип документа «${name}» создан`);
     } else {
@@ -569,10 +917,11 @@ export class DocumentsView extends ItemView {
   async syncAndRender(): Promise<void> {
     try {
       await this.plugin.syncService.sync();
-      this.renderView();
+      this.renderSidebarFilters();
+      this.renderDocumentsView();
     } catch (e: unknown) {
       new Notice(`Документы: синхронизация не выполнена — ${errorMessage(e)}`);
-      this.renderView();
+      this.renderDocumentsView();
     }
   }
 }

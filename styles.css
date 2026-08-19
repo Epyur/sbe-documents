@@ -441,8 +441,268 @@
 /* Классы вьюхи документов (tn-doc-*) на семантических токенах дизайн-системы SBE. */
 
 .tn-doc-container {
-  padding: 12px;
+  padding: 0;
+  height: 100%;
 }
+
+/* ================= Фасад (каркас: шапка + сайдбар + контент) ================= */
+
+.tn-doc-app {
+  --accent: #E11B17;
+  --accent-soft: #FDECEB;
+  --bg: #F3F5F7;
+  --surface: #FFFFFF;
+  --border: #E7EAEF;
+  --muted: #667387;
+  --active-nav: #F9F9FA;
+  --radius: 16px;
+  --radius-sm: 10px;
+
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--bg);
+  color: #171725;
+  box-sizing: border-box;
+  font-size: 14px;
+}
+
+/* шапка 54px */
+.tn-doc-topbar {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.tn-doc-module-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #171725;
+  white-space: nowrap;
+}
+
+.tn-doc-crumb {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tn-doc-spacer {
+  flex: 1;
+}
+
+.tn-doc-create {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.tn-doc-create:hover {
+  background: var(--accent-soft);
+}
+
+/* тело: сайдбар и контент — белые карточки */
+.tn-doc-main {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  min-height: 0;
+}
+
+.tn-doc-sidebar {
+  width: 320px;
+  min-width: 320px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width .2s, min-width .2s;
+}
+
+.tn-doc-app.collapsed .tn-doc-sidebar {
+  width: 64px;
+  min-width: 64px;
+}
+
+.tn-doc-collapse {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  color: var(--muted);
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.tn-doc-collapse:hover {
+  color: #171725;
+}
+
+.tn-doc-app.collapsed .tn-doc-collapse .tn-doc-collapse-lbl {
+  display: none;
+}
+
+/* дерево навигации */
+.tn-doc-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 10px 16px;
+}
+
+.tn-doc-grp {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  color: #171725;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.tn-doc-grp:hover {
+  background: var(--bg);
+}
+
+.tn-doc-grp .tn-doc-grp-chev {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  transition: transform .15s;
+}
+
+.tn-doc-grp.open .tn-doc-grp-chev {
+  transform: rotate(90deg);
+}
+
+.tn-doc-grp.open {
+  color: var(--accent);
+}
+
+.tn-doc-submenu {
+  display: block;
+  padding-left: 14px;
+}
+
+.tn-doc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  color: #171725;
+  text-decoration: none;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tn-doc-nav-item:hover {
+  background: var(--bg);
+}
+
+.tn-doc-nav-item.active {
+  background: var(--active-nav);
+  color: #171725;
+  font-weight: 600;
+}
+
+.tn-doc-app.collapsed .tn-doc-nav-lbl,
+.tn-doc-app.collapsed .tn-doc-grp .tn-doc-grp-lbl,
+.tn-doc-app.collapsed .tn-doc-nav-item .tn-doc-nav-lbl,
+.tn-doc-app.collapsed .tn-doc-submenu,
+.tn-doc-app.collapsed .tn-doc-grp .tn-doc-grp-chev {
+  display: none;
+}
+
+.tn-doc-app.collapsed .tn-doc-grp,
+.tn-doc-app.collapsed .tn-doc-nav-item {
+  padding: 9px;
+  justify-content: center;
+}
+
+/* панель управления (низ сайдбара) */
+.tn-doc-sidebar-actions {
+  border-top: 1px solid var(--border);
+  padding: 6px 10px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tn-doc-nav-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tn-doc-nav-action:hover {
+  background: var(--bg);
+  color: #171725;
+}
+
+.tn-doc-app.collapsed .tn-doc-nav-action .tn-doc-nav-lbl {
+  display: none;
+}
+
+.tn-doc-app.collapsed .tn-doc-nav-action {
+  padding: 9px;
+  justify-content: center;
+}
+
+/* контент */
+.tn-doc-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.tn-doc-page-title {
+  font-size: 18px;
+  margin: 0 0 4px 0;
+}
+
+.tn-doc-page-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+/* ================= Общие элементы форм/списков ================= */
 
 .tn-doc-header {
   display: flex;
@@ -497,14 +757,6 @@
   margin-top: 12px;
 }
 
-.tn-doc-filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  font-size: var(--font-smaller);
-}
-
 .tn-doc-filter-label {
   display: inline-flex;
   align-items: center;
@@ -525,31 +777,8 @@
   font-size: var(--font-smaller);
 }
 
-.tn-doc-center {
-  text-align: center;
-}
-
 .tn-doc-p24 {
   padding: 24px;
-}
-
-.tn-doc-row {
-  cursor: pointer;
-}
-
-.tn-doc-row:hover {
-  background: var(--background-secondary-hover);
-}
-
-.tn-doc-link {
-  color: var(--content-accent-enabled);
-  cursor: pointer;
-}
-
-.tn-doc-img {
-  max-width: 100%;
-  max-height: 300px;
-  margin-top: 8px;
 }
 
 .tn-doc-clickable {
@@ -562,18 +791,164 @@
   text-decoration: underline;
 }
 
-.tn-doc-green {
+/* ================= Карточки документов со вложенными связанными ================= */
+
+.tn-doc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tn-doc-card:hover {
+  border-color: var(--accent);
+}
+
+.tn-doc-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tn-doc-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.tn-doc-completed {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.tn-doc-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tn-doc-chip-green {
   color: var(--content-system-positive);
+  background: color-mix(in srgb, var(--content-system-positive) 12%, transparent);
 }
 
-.tn-doc-red {
+.tn-doc-chip-red {
   color: var(--content-system-negative);
+  background: color-mix(in srgb, var(--content-system-negative) 12%, transparent);
 }
 
-.tn-doc-orange {
+.tn-doc-chip-orange {
   color: var(--content-system-warning);
+  background: color-mix(in srgb, var(--content-system-warning) 14%, transparent);
 }
 
-.tn-doc-bold {
-  font-weight: 700;
+.tn-doc-card-meta {
+  color: var(--muted);
+  font-size: var(--font-smaller);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.tn-doc-card-file {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tn-doc-card-children {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tn-doc-child-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tn-doc-child-item:hover {
+  border-color: var(--accent);
+}
+
+.tn-doc-child-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tn-doc-child-file {
+  color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tn-doc-child-nested {
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ================= Пикер привязки связанных документов ================= */
+
+.tn-doc-attach-picker {
+  cursor: default;
+}
+
+.tn-doc-attach-picker .tn-doc-card-head,
+.tn-doc-attach-picker h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.tn-doc-attach-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* ================= Фильтры по типам в сайдбаре ================= */
+
+.tn-doc-sidebar-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.tn-doc-sidebar-filter:hover {
+  background: var(--bg);
+}
+
+.tn-doc-nav-empty {
+  color: var(--muted);
+  font-size: var(--font-smaller);
+  padding: 8px 10px;
 }

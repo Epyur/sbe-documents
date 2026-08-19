@@ -57,7 +57,10 @@
 ### POST /api/documents/remark-file — загрузка файла замечания
 - `multipart/form-data`, поля `file` + `document_id`. Ключ `documents/{document_id}/remarks/{name}`.
 
-### GET /api/documents/file?key=... — скачивание файла из S3 (для рендера изображений).
+### GET /api/documents/file?key=... — скачивание файла из S3
+- Плагин сохраняет файл в кэш вольта `yourbase/sbe_documents/files/` и открывает:
+  встроенным просмотрщиком Obsidian (md/pdf/img/txt/csv/html) или системным приложением
+  (electron `shell.openPath`).
 
 ### GET /api/documents/health — статус.
 

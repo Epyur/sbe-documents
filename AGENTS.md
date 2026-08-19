@@ -25,7 +25,7 @@ SBE-плагин «Документы»: локальная БД-кэш доку
 | `src/main.ts` | `SbeDocumentsPlugin`: настройки, БД, syncService, миграция, view, publishService |
 | `src/database/documents-db.ts` | `DocumentsDatabase`: кэш JSON, mergeFromServer (LWW), dedupe, importLegacy, doc_types |
 | `src/services/sync.service.ts` | `DocumentsSyncService`: push/pull/uploadFile/uploadRemarkFile, JWT, multipart, таймауты |
-| `src/ui/documents-view.ts` | `DocumentsView`: таблица, детали, create/edit, связанные (parentId), замечания, экспорт HTML |
+| `src/ui/documents-view.ts` | `DocumentsView`: фасад «LogicTEAM.Документы» (топбар+сайдбар+контент), карточки со вложенными связанными, детали, привязка/отвязка, create/edit, замечания, фильтры по типам в сайдбаре, скачивание/открытие файлов, экспорт HTML |
 | `src/ui/settings-tab.ts` | Настройки: apiUrl, куратор по умолчанию |
 | `src/types/documents.ts` | `DocItem`, `DocumentRemark`, `DocumentsDbData`, `UploadFileResponse`, legacy-типы |
 | `src/styles.css` | Классы `tn-doc-*` на семантических токенах |
@@ -44,6 +44,40 @@ SBE-плагин «Документы»: локальная БД-кэш доку
   документацию, подготовить сообщение для коммита и СПРОСИТЬ подтверждение commit/push.**
 
 ## История работ
+
+### 2026-08-19 — v0.1.7 (фасад + карточки со связями, скачивание файлов, фиксы)
+- **Скачивание файлов из S3**: `file_url` — прямой S3-URL (бакет `sbe-doc` приватный) → в
+  браузере ошибка доступа. Используется JWT-эндпоинт `GET /api/documents/file?key=...`
+  (`sync.service.downloadFile`): файл сохраняется в `yourbase/sbe_documents/files/`, затем
+  открывается в Obsidian (md/pdf/img/txt/csv/html — `workspace.openLinkText`) или системным
+  приложением (`require('electron').shell.openPath`). esbuild: `external: ['obsidian', 'electron']`.
+  `request()` теперь возвращает `{status, text, arrayBuffer}`.
+- **Фасад «LogicTEAM.Документы»** (как sbe-requests/sbe-lims): топбар + сайдбар (сворачивание,
+  дерево навигации, «Фильтры» с чекбоксами типов, Синхронизация, Экспорт HTML) + контент-карточка.
+- **Карточки вместо таблицы**: документы — карточками (заголовок, чип срока, мета, файл), связанные
+  (`parent_id>0`) показываются вложенными списками внутри карточки родителя (рекурсивно, как
+  подзадачи в sbe-tasks) и **не имеют собственной карточки**; порядок — по id (порядок добавления).
+- **Привязка/отвязка**: «🔗 Привязать документы» — пикер существующих «свободных» документов
+  (чекбоксы, без перезаполнения реквизитов); «➕ Связанный документ» — только создание нового
+  (форма без блока выбора из существующих); «⤴ Отвязать» в деталях (`parent_id=0`). При привязке
+  поднимается `updated_at` → push LWW проходит, связь переживает синк.
+- **Фикс кнопки «← Назад»**: `renderDocumentsView()` теперь очищает `bodyEl` (`container.empty()`).
+  В старой сборке контент очищал только `renderPage()`, а «Назад» вызывал рендер списка напрямую —
+  детали оставались, список дописывался каждый раз.
+- **Пояснение по потерянным связям**: legacy-связи (`parent_id`) жили только в локальном кэше,
+  на сервере были `parent_id=0`; `mergeFromServer` (LWW, сервер — канон) затирал их при
+  `server.updated_at >= local.updated_at`. Связи, созданные через привязку, сохраняются.
+- Версия 0.1.6 → **0.1.7** (manifest + package.json). `npx tsc --noEmit` EXIT=0; `npm run build` OK.
+  Коммит и пуш сделаны.
+
+### 2026-08-18 — v0.1.6 (пересборка за sbe-core: sbe-lims в service-map)
+- `sbe-core`: добавлены `SbeLimsApi` и `'sbe-lims'` в `SbeServiceMap` — пересборка `main.js`,
+  исходники плагина не менялись. Версия 0.1.5 → **0.1.6** (manifest + package.json).
+- `npx tsc --noEmit` EXIT=0; `npm run build` OK. Коммит и пуш сделаны.
+
+### 2026-08-18 — v0.1.5 (пересборка за sbe-core: SbeEknApi)
+- `sbe-core`: добавлены `SbeEknApi` и `'sbe-ekn'` в `SbeServiceMap` — пересборка `main.js`,
+  исходники не менялись. Версия 0.1.4 → **0.1.5** (manifest + package.json).
 
 ### 2026-08-17 — v0.1.4 (Этап 5: роли + общий доступ; фикс дублей миграции)
 - **Расширенная модель ролей**: `viewer` < `commenter` < `editor` < `admin`. Сервер
