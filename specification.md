@@ -22,7 +22,7 @@
   "file_name": "…", "file_size": 123, "file_url": "https://s3.firstvds.ru/sbe-doc/…",
   "link_url": "https://kb.tn.ru/…",   // legacy-внешняя ссылка (опционально)
   "link_file_name": "…",
-  "parent_id": 0,                     // 0 = корневой (связанные документы)
+  "parent_id": 0,                     // 0 = корневой; >0 = связанный документ (свой карточки нет)
   "completed": false,
   "remarks": [{                       // замечания
     "element_number": "…", "current_edition": "…",
@@ -34,6 +34,15 @@
   "sync_status": "local | synced"        // только локально
 }
 ```
+
+Примечания:
+- `file_url` — прямой S3-URL, но бакет `sbe-doc` **приватный**: в браузере не открывается.
+  Плагин скачивает файл через `GET /api/documents/file?key=...` (JWT) в кэш вольта
+  `yourbase/sbe_documents/files/` и открывает встроенным просмотрщиком Obsidian
+  (md/pdf/img/txt/csv/html) или системным приложением (electron `shell.openPath`).
+- `parent_id > 0`: привязанный документ не получает отдельную карточку в списке и
+  отображается вложенным внутри карточки родителя; отвязка — кнопка в деталях
+  (`parent_id = 0`). Привязать можно только «свободный» документ (свой корень).
 
 Локальная БД: `yourbase/sbe_documents/documents_data.json` → `{"documents": [...], "doc_types": [string]}`.
 `doc_types` — локальный реестр использованных типов (для datalist), сервер не хранит.
@@ -74,7 +83,8 @@
 
 - Go-сервис, контейнер `documents`, БД `documents` (postgres `documents-db`).
 - Таблицы: `documents`, `documents_permissions(app, email, role)`.
-- JWT: app_id `documents`, роли user/admin; owner_email = polishchuk@tn.ru (seed при старте).
+- JWT: app_id `documents`, роли viewer < commenter < editor < admin + общий доступ
+  (`documents_common_access`); owner_email = polishchuk@tn.ru (seed при старте).
 - При старте: `POST /apps/register` в auth-service (DOCUMENTS_APP_ID/NAME/OWNER_EMAIL/SERVICE_SECRET).
 - Caddy: `/api/documents/*` → `documents:3000` (до `/api/*`).
 
