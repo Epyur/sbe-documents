@@ -52,6 +52,10 @@ SBE-плагин «Документы»: локальная БД-кэш доку
 
 ## История работ
 
+### 2026-08-20 — v0.1.8 (пересборка за sbe-core: SbeContactsApi)
+- `sbe-core`: добавлены `SbeContactsApi` и `'sbe-contacts'` в `SbeServiceMap` — пересборка `main.js`, исходники плагина не менялись. Версия 0.1.7 → **0.1.8** (manifest + package.json).
+- `npx tsc --noEmit` EXIT=0; `npm run build` OK.
+
 ### 2026-08-19 — v0.1.7 (фасад + карточки со связями, скачивание файлов, фиксы)
 - **Скачивание файлов из S3**: `file_url` — прямой S3-URL (бакет `sbe-doc` приватный) → в
   браузере ошибка доступа. Используется JWT-эндпоинт `GET /api/documents/file?key=...`
