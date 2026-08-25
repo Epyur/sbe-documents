@@ -181,6 +181,7 @@ export default class SbeDocumentsPlugin extends Plugin {
               protocol_number: '',
               certification_body: '',
               ik_date: 0,
+              archived: false,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               sync_status: 'local',
@@ -256,7 +257,7 @@ export default class SbeDocumentsPlugin extends Plugin {
         appId: this.manifest.id,
         appName: this.manifest.name,
         version: this.manifest.version,
-        summary: 'Плагин «Документы»: появился реестр сертификатов и документов соответствия — его можно вести прямо в плагине, прикреплять файлы и выгружать реестр в Excel с учётом фильтров.',
+        summary: 'Плагин «Документы»: добавлены архив документов (в т.ч. автоматический по истечении срока), фильтры «Действующие» и «Архивные документы», сортировка по сроку действия, страница «Настройки реестра» с управлением группами типов, настройки уведомлений об истечении срока.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();

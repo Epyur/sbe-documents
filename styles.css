@@ -823,6 +823,55 @@
   word-break: break-word;
 }
 
+/* ================= Управление группами типов (Настройки реестра) ================= */
+
+.tn-doc-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tn-doc-type-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.tn-doc-type-name {
+  flex: 1 1 220px;
+  min-width: 200px;
+}
+
+.tn-doc-type-title {
+  font-weight: 600;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.tn-doc-type-count {
+  color: var(--muted);
+  font-size: var(--font-smaller);
+}
+
+.tn-doc-type-ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  flex: 0 1 auto;
+}
+
+.tn-doc-type-lbl {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 /* ================= Карточки документов со вложенными связанными ================= */
 
 .tn-doc-card {

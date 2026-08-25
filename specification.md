@@ -46,6 +46,7 @@
   "protocol_number": "435/080824/1",     // № протокола испытаний
   "certification_body": "ТОО «Текс»",    // Название ОС
   "ik_date": 1723420800000               // Дата ИК, мс
+  "archived": false                      // в архиве (ручной архив или истёкший срок)
 }
 ```
 
@@ -119,6 +120,22 @@
   `curator_email != ''` — письмо куратору с адреса noreply (`SMTP_FROM`, общая с
   auth-service) через локальный exim. Не чаще одного письма на (документ, срок):
   таблица `documents_notifications`.
+
+### POST /api/documents/archive — отправить в архив / вернуть из архива (куратор или admin)
+- Тело: `{"id": int, "archived": bool}`. Доступно admin или editor, совпадающему
+  с `curator_email` документа. `archived` хранится в БД.
+
+### DELETE /api/documents/{id} — удалить документ (куратор или admin)
+- Удаляет документ из БД (и его записи уведомлений). Доступно admin или editor,
+  совпадающему с `curator_email` документа.
+
+### POST /api/documents/types/merge — объединить/переименовать типы (admin)
+- Тело: `{"from": [старые названия], "to": "общее имя"}`. Обновляет `doc_type`
+  у документов; локальная БД плагина обновляется отдельно (`mergeDocType`).
+
+### Авто-архив по истечении срока
+- `documents-service.checkArchived` (старт + раз в 6 ч): `UPDATE documents SET archived = true
+  WHERE deadline > 0 AND deadline < now() AND archived = false`.
 
 ### GET /api/documents/health — статус.
 
