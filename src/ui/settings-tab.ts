@@ -50,6 +50,59 @@ export class DocumentsSettingsTab extends PluginSettingTab {
     const permsDiv = containerEl.createDiv({ cls: 'tn-doc-meta' });
     permsDiv.setText('Загрузка…');
     void this.renderPermissions(permsDiv);
+
+    new Setting(containerEl)
+      .setHeading()
+      .setName('Уведомления об истечении срока');
+
+    const notifyDiv = containerEl.createDiv({ cls: 'tn-doc-meta' });
+    notifyDiv.setText('Загрузка…');
+    void this.renderNotifySettings(notifyDiv);
+  }
+
+  /** Раздел «Уведомления об истечении срока»: только admin управляет, письма кураторам с noreply. */
+  private async renderNotifySettings(container: HTMLElement): Promise<void> {
+    try {
+      const me = await this.plugin.syncService.getMyPermission();
+      if (!me.hasAccess) {
+        container.setText('Нет доступа к серверу. Запросите ключ в ЦУП и получите доступ у администратора.');
+        return;
+      }
+      if (me.role !== 'admin') {
+        container.setText('Настройка уведомлений доступна только администратору.');
+        return;
+      }
+      const settings = await this.plugin.syncService.getNotifySettings();
+      container.empty();
+
+      const info = container.createDiv({ cls: 'tn-doc-mb8' });
+      info.setText('Письма об истечении срока действия документов приходят куратору документа с адреса noreply (как у сервиса авторизации).');
+
+      const enableLabel = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb8', text: 'Отправлять уведомления:' });
+      const enableCb = container.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb tn-doc-mb8' });
+      enableCb.checked = settings.enabled;
+
+      const daysLabel = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb8', text: 'За сколько дней до истечения уведомлять (через запятую):' });
+      const daysInput = container.createEl('input', { attr: { type: 'text', placeholder: '30,14,7' }, cls: 'tn-doc-input tn-doc-mb8' });
+      daysInput.value = settings.days.join(', ');
+
+      const saveBtn = container.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
+      saveBtn.addEventListener('click', async () => {
+        const days = daysInput.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+        if (days.length === 0) {
+          new Notice('Укажите хотя бы один срок (целое число дней)');
+          return;
+        }
+        try {
+          await this.plugin.syncService.setNotifySettings({ enabled: enableCb.checked, days });
+          new Notice('Настройки уведомлений сохранены');
+        } catch (e: unknown) {
+          new Notice(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      });
+    } catch (e: unknown) {
+      container.setText(`Не удалось загрузить настройки уведомлений: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** Вкладка «Права доступа»: только admin может просматривать и менять роли. */

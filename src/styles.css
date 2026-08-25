@@ -351,6 +351,20 @@
   text-decoration: underline;
 }
 
+/* Таблица реквизитов реестра в карточке документа */
+.tn-doc-detail-label {
+  width: 45%;
+  text-align: left;
+  vertical-align: top;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tn-doc-detail-value {
+  white-space: pre-line;
+  word-break: break-word;
+}
+
 /* ================= Карточки документов со вложенными связанными ================= */
 
 .tn-doc-card {

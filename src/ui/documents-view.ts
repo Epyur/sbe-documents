@@ -2,10 +2,28 @@ import { ItemView, Notice, WorkspaceLeaf, FileSystemAdapter } from 'obsidian';
 import type SbeDocumentsPlugin from '../main';
 import type { DocItem, DocumentRemark } from '../types/documents';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { buildXlsx } from '../utils/xlsx-writer';
 
 export const SBE_DOCUMENTS_VIEW_TYPE = 'sbe-documents-view';
 
 type NavKey = 'documents';
+
+/** Контролы полей реестра (колонки Excel) в форме создания/редактирования. */
+interface RegistryControls {
+  docNumber: HTMLInputElement;
+  country: HTMLInputElement;
+  validFrom: HTMLInputElement;
+  comment: HTMLTextAreaElement;
+  responsible: HTMLInputElement;
+  productGroup: HTMLInputElement;
+  trademark: HTMLInputElement;
+  manufacturer: HTMLInputElement;
+  tnVedCode: HTMLInputElement;
+  testingLab: HTMLTextAreaElement;
+  protocolNumber: HTMLTextAreaElement;
+  certificationBody: HTMLInputElement;
+  ikDate: HTMLInputElement;
+}
 
 const PAGE_META: Record<NavKey, { title: string; sub: string }> = {
   documents: { title: 'Все документы', sub: 'Реестр документов' },
@@ -21,6 +39,7 @@ export class DocumentsView extends ItemView {
   private rootEl!: HTMLElement;
   private navEl!: HTMLElement;
   private filtersEl!: HTMLElement;
+  private countryFiltersEl!: HTMLElement;
   private pageTitleEl!: HTMLElement;
   private pageSubEl!: HTMLElement;
   private crumbEl!: HTMLElement;
@@ -29,6 +48,7 @@ export class DocumentsView extends ItemView {
   private key: NavKey = 'documents';
   private collapsed = false;
   private selectedDocTypes: Set<string> = new Set();
+  private selectedCountries: Set<string> = new Set();
   private searchQuery = '';
   private searchTimeout: number | null = null;
   private myRole = '';
@@ -71,7 +91,6 @@ export class DocumentsView extends ItemView {
   refresh(): void {
     this.renderPage();
   }
-
   // ---- Каркас ----
 
   private buildShell(): void {
@@ -101,7 +120,7 @@ export class DocumentsView extends ItemView {
     this.navEl = sidebar.createDiv({ cls: 'tn-doc-nav' });
     this.buildNav();
 
-    // панель управления: синхронизация и экспорт HTML
+    // панель управления: синхронизация и экспорт
     const actions = sidebar.createDiv({ cls: 'tn-doc-sidebar-actions' });
     const syncBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
     syncBtn.createSpan({ text: '🔄' });
@@ -111,6 +130,16 @@ export class DocumentsView extends ItemView {
     exportBtn.createSpan({ text: '📄' });
     exportBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Экспорт HTML' });
     exportBtn.addEventListener('click', () => { void this.exportHtml(); });
+    const exportXlsxBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
+    exportXlsxBtn.createSpan({ text: '📊' });
+    exportXlsxBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Экспорт Excel' });
+    exportXlsxBtn.addEventListener('click', () => { void this.exportExcel(); });
+    if (this.canEdit) {
+      const importBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
+      importBtn.createSpan({ text: '📥' });
+      importBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Импорт реестра' });
+      importBtn.addEventListener('click', () => { void this.importRegistry(); });
+    }
 
     const content = main.createDiv({ cls: 'tn-doc-content' });
     this.pageTitleEl = content.createEl('h1', { cls: 'tn-doc-page-title' });
@@ -155,6 +184,19 @@ export class DocumentsView extends ItemView {
     filterGroup.classList.add('open');
     this.renderSidebarFilters();
 
+    // Группа «Страна» — чекбоксы стран документов
+    const countryGroup = this.navEl.createEl('button', { cls: 'tn-doc-grp' });
+    countryGroup.createSpan({ cls: 'tn-doc-grp-ico', text: '🌍' });
+    countryGroup.createSpan({ cls: 'tn-doc-grp-lbl', text: 'Страна' });
+    countryGroup.createSpan({ cls: 'tn-doc-grp-chev', text: '▶' });
+    countryGroup.addEventListener('click', () => {
+      countryGroup.classList.toggle('open');
+      countryGroup.classList.toggle('active');
+    });
+    this.countryFiltersEl = this.navEl.createDiv({ cls: 'tn-doc-submenu tn-doc-filters-nav' });
+    countryGroup.classList.add('open');
+    this.renderSidebarCountryFilters();
+
     this.syncNavActive();
   }
 
@@ -177,6 +219,32 @@ export class DocumentsView extends ItemView {
         this.renderPage();
       });
       wrapper.createEl('span').setText(t);
+    }
+  }
+
+  /** Чекбоксы фильтров по странам (в группе «Страна» сайдбара). */
+  private renderSidebarCountryFilters(): void {
+    if (!this.countryFiltersEl) return;
+    this.countryFiltersEl.empty();
+    const countries = new Set<string>();
+    for (const d of this.plugin.documentsDb.getAll()) {
+      if (d.country) countries.add(d.country);
+    }
+    const list = Array.from(countries).sort((a, b) => a.localeCompare(b, 'ru'));
+    if (list.length === 0) {
+      this.countryFiltersEl.createDiv({ cls: 'tn-doc-nav-empty' }).setText('Стран пока нет');
+      return;
+    }
+    for (const c of list) {
+      const wrapper = this.countryFiltersEl.createEl('label', { cls: 'tn-doc-filter-label tn-doc-sidebar-filter' });
+      const cb = wrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-doc-cb' });
+      cb.checked = this.selectedCountries.has(c);
+      cb.addEventListener('change', () => {
+        if (cb.checked) this.selectedCountries.add(c);
+        else this.selectedCountries.delete(c);
+        this.renderPage();
+      });
+      wrapper.createEl('span').setText(c);
     }
   }
 
@@ -234,27 +302,8 @@ export class DocumentsView extends ItemView {
       this.searchTimeout = window.setTimeout(() => this.renderDocumentsView(), 400);
     });
 
-    const all = this.plugin.documentsDb.getAll();
-    const ids = new Set(all.map(d => d.id));
-    // Дерево: дети по parent_id, корни — документы без привязки.
-    const byParent = new Map<number, DocItem[]>();
-    const roots: DocItem[] = [];
-    for (const d of all) {
-      if (d.parent_id > 0 && ids.has(d.parent_id)) {
-        const list = byParent.get(d.parent_id) || [];
-        list.push(d);
-        byParent.set(d.parent_id, list);
-      } else {
-        roots.push(d);
-      }
-    }
-    // Порядок вывода карточек — по порядку добавления в архив (по id).
-    const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
-    roots.sort(byId);
-    for (const list of byParent.values()) list.sort(byId);
-
-    const q = this.searchQuery.trim().toLowerCase();
-    const visible = roots.filter(r => this.subtreeMatches(r, byParent, q));
+    const { byParent } = this.getTree();
+    const visible = this.getVisibleRoots();
 
     if (visible.length === 0) {
       container.createDiv({ cls: 'tn-doc-meta tn-doc-p24' }).setText('Нет документов');
@@ -266,11 +315,40 @@ export class DocumentsView extends ItemView {
     }
   }
 
-  /** Совпадение документа с поиском и выбранными типами. */
+  /** Дерево документов: корни и связанные (parent_id) по каждому родителю. */
+  private getTree(): { roots: DocItem[]; byParent: Map<number, DocItem[]> } {
+    const all = this.plugin.documentsDb.getAll();
+    const ids = new Set(all.map(d => d.id));
+    const byParent = new Map<number, DocItem[]>();
+    const roots: DocItem[] = [];
+    for (const d of all) {
+      if (d.parent_id > 0 && ids.has(d.parent_id)) {
+        const list = byParent.get(d.parent_id) || [];
+        list.push(d);
+        byParent.set(d.parent_id, list);
+      } else {
+        roots.push(d);
+      }
+    }
+    const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
+    roots.sort(byId);
+    for (const list of byParent.values()) list.sort(byId);
+    return { roots, byParent };
+  }
+
+  /** Корневые документы, попавшие в текущий фильтр (поиск + типы + страны). */
+  private getVisibleRoots(): DocItem[] {
+    const { roots, byParent } = this.getTree();
+    const q = this.searchQuery.trim().toLowerCase();
+    return roots.filter(r => this.subtreeMatches(r, byParent, q));
+  }
+
+  /** Совпадение документа с поиском и выбранными типами/странами. */
   private matches(d: DocItem, q: string): boolean {
     const qOk = !q || d.title.toLowerCase().includes(q);
     const tOk = this.selectedDocTypes.size === 0 || this.selectedDocTypes.has(d.doc_type);
-    return qOk && tOk;
+    const cOk = this.selectedCountries.size === 0 || this.selectedCountries.has(d.country || '');
+    return qOk && tOk && cOk;
   }
 
   /** Карточка показывается, если сам документ или любой вложенный совпал с фильтрами. */
@@ -295,8 +373,10 @@ export class DocumentsView extends ItemView {
     }
 
     const metaParts: string[] = [];
+    if (doc.doc_number) metaParts.push(`🆔 ${doc.doc_number}`);
     if (doc.doc_type) metaParts.push(`📂 ${doc.doc_type}`);
-    if (doc.curator_email) metaParts.push(`👤 ${doc.curator_email}`);
+    if (doc.country) metaParts.push(`🌍 ${doc.country}`);
+    if (doc.responsible) metaParts.push(`👤 ${doc.responsible}`);
     metaParts.push(doc.completed ? '✅ Завершён' : '🟢 Активен');
     card.createDiv({ cls: 'tn-doc-card-meta', text: metaParts.join(' · ') });
 
@@ -373,6 +453,8 @@ export class DocumentsView extends ItemView {
       const parent = this.plugin.documentsDb.getById(doc.parent_id);
       meta.createDiv({ text: `📎 Входит в: ${parent ? parent.title : '—'}` });
     }
+
+    this.renderRegistryDetail(doc, container);
 
     if (doc.file_key) {
       const linkDiv = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb12' });
@@ -488,6 +570,36 @@ export class DocumentsView extends ItemView {
     }
   }
 
+  /** Таблица реквизитов реестра (только заполненные поля). */
+  private renderRegistryDetail(doc: DocItem, container: HTMLElement): void {
+    const fmt = (ms: number): string => (ms ? new Date(ms).toLocaleDateString() : '');
+    const rows: Array<[string, string]> = [];
+    if (doc.doc_number) rows.push(['№ документа', doc.doc_number]);
+    if (doc.country) rows.push(['Страна', doc.country]);
+    if (doc.valid_from) rows.push(['Начало действия', fmt(doc.valid_from)]);
+    if (doc.deadline) rows.push(['Окончание действия', fmt(doc.deadline)]);
+    if (doc.comment) rows.push(['Комментарий', doc.comment]);
+    if (doc.responsible) rows.push(['Ответственный специалист', doc.responsible]);
+    if (doc.product_group) rows.push(['Группа продукции', doc.product_group]);
+    if (doc.trademark) rows.push(['Товарный знак', doc.trademark]);
+    if (doc.manufacturer) rows.push(['Изготовитель', doc.manufacturer]);
+    if (doc.tn_ved_code) rows.push(['Код ТН ВЭД', doc.tn_ved_code]);
+    if (doc.testing_lab) rows.push(['Испытательная лаборатория', doc.testing_lab]);
+    if (doc.protocol_number) rows.push(['№ протокола испытаний', doc.protocol_number]);
+    if (doc.certification_body) rows.push(['Название ОС', doc.certification_body]);
+    if (doc.ik_date) rows.push(['Дата ИК', fmt(doc.ik_date)]);
+    if (rows.length === 0) return;
+
+    const div = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb12' });
+    div.createDiv({ text: '📋 Реквизиты реестра:' });
+    const table = div.createEl('table', { cls: 'tn-table' });
+    for (const [label, value] of rows) {
+      const tr = table.createEl('tr');
+      tr.createEl('th', { text: label }).addClass('tn-doc-detail-label');
+      tr.createEl('td', { text: value }).addClass('tn-doc-detail-value');
+    }
+  }
+
   /** Пикер привязки существующих документов как связанных к текущему. */
   private renderAttachPicker(doc: DocItem): void {
     const container = this.bodyEl;
@@ -591,6 +703,82 @@ export class DocumentsView extends ItemView {
 
   // ---- Формы ----
 
+  /** Контролы полей реестра (колонки Excel) в форме. */
+  private buildRegistryForm(container: HTMLElement, doc?: DocItem): RegistryControls {
+    const c = {} as RegistryControls;
+    const mkLabel = (text: string): void => {
+      container.createEl('label', { text, cls: 'tn-doc-label' });
+    };
+    mkLabel('№ документа');
+    c.docNumber = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Страна');
+    c.country = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Начало действия');
+    c.validFrom = container.createEl('input', { attr: { type: 'date' }, cls: 'tn-doc-input' });
+    mkLabel('Комментарий');
+    c.comment = container.createEl('textarea', { cls: 'tn-doc-textarea' });
+    mkLabel('Ответственный специалист');
+    c.responsible = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Группа продукции');
+    c.productGroup = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Товарный знак');
+    c.trademark = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Изготовитель');
+    c.manufacturer = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Код ТН ВЭД');
+    c.tnVedCode = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Испытательная лаборатория');
+    c.testingLab = container.createEl('textarea', { cls: 'tn-doc-textarea' });
+    mkLabel('№ протокола испытаний');
+    c.protocolNumber = container.createEl('textarea', { cls: 'tn-doc-textarea' });
+    mkLabel('Название ОС');
+    c.certificationBody = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-doc-input' });
+    mkLabel('Дата ИК');
+    c.ikDate = container.createEl('input', { attr: { type: 'date' }, cls: 'tn-doc-input' });
+
+    if (doc) {
+      c.docNumber.value = doc.doc_number;
+      c.country.value = doc.country;
+      c.validFrom.value = doc.valid_from ? new Date(doc.valid_from).toISOString().slice(0, 10) : '';
+      c.comment.value = doc.comment;
+      c.responsible.value = doc.responsible;
+      c.productGroup.value = doc.product_group;
+      c.trademark.value = doc.trademark;
+      c.manufacturer.value = doc.manufacturer;
+      c.tnVedCode.value = doc.tn_ved_code;
+      c.testingLab.value = doc.testing_lab;
+      c.protocolNumber.value = doc.protocol_number;
+      c.certificationBody.value = doc.certification_body;
+      c.ikDate.value = doc.ik_date ? new Date(doc.ik_date).toISOString().slice(0, 10) : '';
+    }
+    return c;
+  }
+
+  /** Читает значения полей реестра из контролов формы. */
+  private readRegistry(c: RegistryControls): {
+    doc_number: string; country: string; valid_from: number; comment: string;
+    responsible: string; product_group: string; trademark: string; manufacturer: string;
+    tn_ved_code: string; testing_lab: string; protocol_number: string;
+    certification_body: string; ik_date: number;
+  } {
+    const dateMs = (v: string): number => (v ? new Date(`${v}T23:59:59`).getTime() : 0);
+    return {
+      doc_number: c.docNumber.value.trim(),
+      country: c.country.value.trim(),
+      valid_from: dateMs(c.validFrom.value),
+      comment: c.comment.value.trim(),
+      responsible: c.responsible.value.trim(),
+      product_group: c.productGroup.value.trim(),
+      trademark: c.trademark.value.trim(),
+      manufacturer: c.manufacturer.value.trim(),
+      tn_ved_code: c.tnVedCode.value.trim(),
+      testing_lab: c.testingLab.value.trim(),
+      protocol_number: c.protocolNumber.value.trim(),
+      certification_body: c.certificationBody.value.trim(),
+      ik_date: dateMs(c.ikDate.value),
+    };
+  }
+
   private showCreateForm(parentDoc?: DocItem): void {
     const container = this.bodyEl;
     container.empty();
@@ -625,6 +813,8 @@ export class DocumentsView extends ItemView {
 
     const deadlineLabel = container.createEl('label', { text: 'Срок действия', cls: 'tn-doc-label' });
     const deadlineInput = container.createEl('input', { attr: { type: 'date' }, cls: 'tn-doc-input' });
+
+    const reg = this.buildRegistryForm(container);
 
     const fileLabel = container.createEl('label', { text: 'Файл документа', cls: 'tn-doc-label' });
     const fileInput = container.createEl('input', { attr: { type: 'file' }, cls: 'tn-doc-mb8' });
@@ -687,6 +877,7 @@ export class DocumentsView extends ItemView {
         const deadlineVal = deadlineInput.value;
         const deadlineMs = deadlineVal ? new Date(`${deadlineVal}T23:59:59`).getTime() : 0;
         const linkUrl = linkInput.value.trim();
+        const regVals = this.readRegistry(reg);
 
         const docItem: DocItem = {
           id: Date.now() + Math.floor(Math.random() * 1000),
@@ -703,6 +894,19 @@ export class DocumentsView extends ItemView {
           parent_id: parentDoc ? parentDoc.id : 0,
           completed: false,
           remarks: [],
+          country: regVals.country,
+          doc_number: regVals.doc_number,
+          valid_from: regVals.valid_from,
+          comment: regVals.comment,
+          responsible: regVals.responsible,
+          product_group: regVals.product_group,
+          trademark: regVals.trademark,
+          manufacturer: regVals.manufacturer,
+          tn_ved_code: regVals.tn_ved_code,
+          testing_lab: regVals.testing_lab,
+          protocol_number: regVals.protocol_number,
+          certification_body: regVals.certification_body,
+          ik_date: regVals.ik_date,
           created_at: now,
           updated_at: now,
           sync_status: 'local',
@@ -763,6 +967,8 @@ export class DocumentsView extends ItemView {
     const deadlineInput = container.createEl('input', { attr: { type: 'date' }, cls: 'tn-doc-input' });
     deadlineInput.value = doc.deadline ? new Date(doc.deadline).toISOString().slice(0, 10) : '';
 
+    const reg = this.buildRegistryForm(container, doc);
+
     const btnRow = container.createDiv({ cls: 'tn-doc-header tn-doc-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
     const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
@@ -777,6 +983,20 @@ export class DocumentsView extends ItemView {
       doc.doc_type = typeInput.value.trim();
       doc.curator_email = curatorInput.value.trim();
       doc.deadline = deadlineMs;
+      const regVals = this.readRegistry(reg);
+      doc.doc_number = regVals.doc_number;
+      doc.country = regVals.country;
+      doc.valid_from = regVals.valid_from;
+      doc.comment = regVals.comment;
+      doc.responsible = regVals.responsible;
+      doc.product_group = regVals.product_group;
+      doc.trademark = regVals.trademark;
+      doc.manufacturer = regVals.manufacturer;
+      doc.tn_ved_code = regVals.tn_ved_code;
+      doc.testing_lab = regVals.testing_lab;
+      doc.protocol_number = regVals.protocol_number;
+      doc.certification_body = regVals.certification_body;
+      doc.ik_date = regVals.ik_date;
       doc.sync_status = 'local';
       doc.updated_at = new Date().toISOString();
       this.plugin.documentsDb.update(doc.id, doc);
@@ -910,6 +1130,92 @@ export class DocumentsView extends ItemView {
     }
   }
 
+  /** Экспорт текущего отфильтрованного набора документов в .xlsx (без зависимостей).
+   *  В колонке «Файл/Ссылка» — временные веб-ссылки на файлы (presigned S3) как
+   *  кликабельные гиперссылки. */
+  private async exportExcel(): Promise<void> {
+    const docs = this.getVisibleRoots();
+    if (docs.length === 0) {
+      new Notice('Нет документов для экспорта');
+      return;
+    }
+    const header = [
+      '№', 'Название продукции', 'Тип документа', 'Страна', '№ документа',
+      'Начало действия', 'Окончание действия', 'Комментарий', 'Ответственный специалист',
+      'Группа продукции', 'Товарный знак', 'Изготовитель', 'Код ТН ВЭД',
+      'Испытательная лаборатория', '№ протокола испытаний', 'Название ОС', 'Дата ИК',
+      'Файл/Ссылка',
+    ];
+    new Notice(`Готовлю ссылки на файлы (${docs.length} документов)…`);
+    const rows: string[][] = new Array(docs.length);
+    const links: Array<{ cell: string; url: string }> = [];
+    let idx = 0;
+    const worker = async (): Promise<void> => {
+      while (idx < docs.length) {
+        const i = idx++;
+        const d = docs[i];
+        let link = '';
+        if (d.file_key) {
+          try {
+            link = await this.plugin.syncService.getFileLink(d.file_key);
+          } catch (e: unknown) {
+            console.warn(`Документы: не удалось получить ссылку на файл «${d.file_name}»:`, errorMessage(e));
+          }
+        } else if (d.link_url) {
+          link = d.link_url;
+        }
+        rows[i] = this.exportRow(d, i + 1, link);
+        if (link) links.push({ cell: `R${i + 2}`, url: link });
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    const data = buildXlsx(header, rows, links);
+    try {
+      const dir = 'yourbase/sbe_documents/exports';
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(dir))) {
+        await adapter.mkdir(dir);
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      const fileName = `Реестр_${stamp}.xlsx`;
+      const path = `${dir}/${fileName}`;
+      const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+      await adapter.writeBinary(path, buf);
+      new Notice(`Экспортировано строк: ${rows.length}`);
+      await this.openLocalFile(path, fileName);
+    } catch (e: unknown) {
+      new Notice(`Ошибка экспорта: ${errorMessage(e)}`);
+    }
+  }
+
+  /** Строка экспорта реестра по документу. fileLink — веб-ссылка на файл. */
+  private exportRow(d: DocItem, index: number, fileLink: string): string[] {
+    const fmt = (ms: number): string => (ms ? new Date(ms).toLocaleDateString('ru-RU') : '');
+    return [
+      String(index), d.title || '', d.doc_type || '', d.country || '', d.doc_number || '',
+      fmt(d.valid_from), fmt(d.deadline), d.comment || '', d.responsible || '',
+      d.product_group || '', d.trademark || '', d.manufacturer || '', d.tn_ved_code || '',
+      d.testing_lab || '', d.protocol_number || '', d.certification_body || '', fmt(d.ik_date),
+      fileLink || d.link_url || '',
+    ];
+  }
+
+  /** Импорт реестра сертификатов из sert/Реестр сертификатов TN1.json. */
+  private async importRegistry(): Promise<void> {
+    if (!this.canEdit) return;
+    const ok = window.confirm('Импортировать реестр сертификатов из файла «sert/Реестр сертификатов TN1.json»?\nУже добавленные ранее записи будут пропущены.');
+    if (!ok) return;
+    try {
+      const result = await this.plugin.importSertRegistry();
+      new Notice(`Импорт реестра: добавлено ${result.added}, пропущено ${result.skipped}; с файлами — ${result.withFile}, без файла — ${result.noFile}`);
+      this.renderSidebarFilters();
+      this.renderSidebarCountryFilters();
+      await this.syncAndRender();
+    } catch (e: unknown) {
+      new Notice(`Ошибка импорта: ${errorMessage(e)}`);
+    }
+  }
+
   private escapeHtml(text: string): string {
     return (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
@@ -918,6 +1224,7 @@ export class DocumentsView extends ItemView {
     try {
       await this.plugin.syncService.sync();
       this.renderSidebarFilters();
+      this.renderSidebarCountryFilters();
       this.renderDocumentsView();
     } catch (e: unknown) {
       new Notice(`Документы: синхронизация не выполнена — ${errorMessage(e)}`);
