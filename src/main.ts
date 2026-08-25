@@ -1,9 +1,10 @@
 import { Plugin, WorkspaceLeaf, Notice } from 'obsidian';
 import { DocumentsDatabase } from './database/documents-db';
 import { DocumentsSyncService } from './services/sync.service';
+import { SertImportService, SertImportResult } from './services/sert-import.service';
 import { DocumentsView, SBE_DOCUMENTS_VIEW_TYPE } from './ui/documents-view';
 import { DocumentsSettingsTab } from './ui/settings-tab';
-import { publishService, unpublishService } from '../../sbe-core/src/bridge';
+import { publishService, unpublishService, getService } from '../../sbe-core/src/bridge';
 import type { SbeDocumentsApi } from '../../sbe-core/src/types';
 import type { DocItem } from './types/documents';
 import { errorMessage } from '../../sbe-core/src/utils/errors';
@@ -13,12 +14,18 @@ export interface SbeDocumentsSettings {
   defaultAuthor: string;
   /** Флаг одноразовой миграции из legacy-кэша монолита (защита от повторного импорта). */
   legacyMigrated: boolean;
+  /** Флаг импорта реестра сертификатов из sert/Реестр сертификатов TN1.json. */
+  sertImported: boolean;
+  /** Версия, для которой уже опубликована новость в «Новости» ЦУП (однократно на версию). */
+  lastAnnouncedVersion: string;
 }
 
 const DEFAULT_SETTINGS: SbeDocumentsSettings = {
   apiUrl: 'https://epyur.fvds.ru',
   defaultAuthor: 'И.И. Иванов',
   legacyMigrated: false,
+  sertImported: false,
+  lastAnnouncedVersion: '',
 };
 
 const LEGACY_CACHE_PATH = 'yourbase/yougile_cache.json';
@@ -27,15 +34,20 @@ export default class SbeDocumentsPlugin extends Plugin {
   settings!: SbeDocumentsSettings;
   documentsDb!: DocumentsDatabase;
   syncService!: DocumentsSyncService;
+  sertImportService!: SertImportService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.documentsDb = new DocumentsDatabase(this.app);
     await this.documentsDb.init();
     this.syncService = new DocumentsSyncService(this.documentsDb, () => this.settings.apiUrl);
+    this.sertImportService = new SertImportService(this);
 
     // Одноразовая миграция из legacy-кэша монолита (yougile_cache.json, type:document).
     await this.migrateLegacyOnce();
+
+    // Одноразовый импорт реестра сертификатов (sert/Реестр сертификатов TN1.json).
+    await this.migrateSertOnce();
 
     this.registerView(
       SBE_DOCUMENTS_VIEW_TYPE,
@@ -52,6 +64,9 @@ export default class SbeDocumentsPlugin extends Plugin {
       version: this.manifest.version,
       name: this.manifest.name,
     });
+
+    // Новость об обновлении — один раз на версию (см. канал «Новости» ЦУП).
+    void this.announceOnce();
   }
 
   onunload(): void {
@@ -153,6 +168,19 @@ export default class SbeDocumentsPlugin extends Plugin {
               parent_id: parentId,
               completed: !!t.completed,
               remarks: Array.isArray(parsedDesc.remarks) ? parsedDesc.remarks : [],
+              country: '',
+              doc_number: '',
+              valid_from: 0,
+              comment: '',
+              responsible: '',
+              product_group: '',
+              trademark: '',
+              manufacturer: '',
+              tn_ved_code: '',
+              testing_lab: '',
+              protocol_number: '',
+              certification_body: '',
+              ik_date: 0,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               sync_status: 'local',
@@ -179,6 +207,61 @@ export default class SbeDocumentsPlugin extends Plugin {
       }
     } catch (e: unknown) {
       console.warn('Документы: не удалось импортировать legacy-БД:', errorMessage(e));
+    }
+  }
+
+  /** Импорт реестра сертификатов (sert/Реестр сертификатов TN1.json) с загрузкой
+   *  файлов в S3. Повторный запуск безвреден — пропускаются записи с тем же
+   *  номером и названием. */
+  async importSertRegistry(): Promise<SertImportResult> {
+    const result = await this.sertImportService.importRegistry();
+    if (result.added > 0) {
+      this.settings.sertImported = true;
+      await this.saveSettings();
+    }
+    return result;
+  }
+
+  /** Одноразовый автоматический импорт реестра сертификатов при первом запуске
+   *  (флаг sertImported в настройках). Ошибки не блокируют загрузку плагина. */
+  private async migrateSertOnce(): Promise<void> {
+    if (this.settings.sertImported) return;
+    try {
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists('sert/Реестр сертификатов TN1.json'))) return;
+      new Notice('Документы: начинаю импорт реестра сертификатов…');
+      const result = await this.sertImportService.importRegistry();
+      this.settings.sertImported = true;
+      await this.saveSettings();
+      if (result.added > 0) {
+        new Notice(`Документы: импортировано ${result.added} документов (с файлами: ${result.withFile}, без файла: ${result.noFile}).`);
+        try {
+          const synced = await this.syncService.sync();
+          new Notice(`Документы: на сервер отправлено документов: ${synced.pushed}.`);
+        } catch (e: unknown) {
+          console.warn('Документы: синхронизация после импорта не выполнена:', errorMessage(e));
+        }
+      }
+    } catch (e: unknown) {
+      console.warn('Документы: не удалось импортировать реестр:', errorMessage(e));
+    }
+  }
+
+  /** Публикация новости в канал «Новости» ЦУП — один раз на версию. */
+  private async announceOnce(): Promise<void> {
+    if (this.settings.lastAnnouncedVersion === this.manifest.version) return;
+    try {
+      const apstore = await getService('sbe-apstore');
+      await apstore.announceUpdate({
+        appId: this.manifest.id,
+        appName: this.manifest.name,
+        version: this.manifest.version,
+        summary: 'Плагин «Документы»: появился реестр сертификатов и документов соответствия — его можно вести прямо в плагине, прикреплять файлы и выгружать реестр в Excel с учётом фильтров.',
+      });
+      this.settings.lastAnnouncedVersion = this.manifest.version;
+      await this.saveSettings();
+    } catch (e: unknown) {
+      console.warn('Документы: не удалось опубликовать новость об обновлении:', errorMessage(e));
     }
   }
 

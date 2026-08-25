@@ -124,6 +124,21 @@ func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+// Link создаёт временную публичную ссылку на объект (presigned GET через rclone link).
+func (s *S3Store) Link(ctx context.Context, key string) (string, error) {
+	cmd := s.rcloneArgs("link", "--expire", "7d", s.remote(key))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("rclone link failed: %v out=%s", err, strings.TrimSpace(string(out)))
+		return "", err
+	}
+	link := strings.TrimSpace(string(out))
+	if link == "" {
+		return "", fmt.Errorf("rclone link: empty url")
+	}
+	return link, nil
+}
+
 // s3Key формирует уникальный ключ для основного файла документа.
 func s3Key(prefix, fileName string) string {
 	return fmt.Sprintf("documents/%s/main-%s", randomID(), sanitizeKey(fileName))

@@ -34,17 +34,21 @@ SBE-плагин «Документы»: локальная БД-кэш доку
 
 | Файл | Что это |
 |---|---|
-| `src/main.ts` | `SbeDocumentsPlugin`: настройки, БД, syncService, миграция, view, publishService |
+| `src/main.ts` | `SbeDocumentsPlugin`: настройки, БД, syncService, миграция, импорт реестра, view, publishService, новость в «Новости» ЦУП |
 | `src/database/documents-db.ts` | `DocumentsDatabase`: кэш JSON, mergeFromServer (LWW), dedupe, importLegacy, doc_types |
 | `src/services/sync.service.ts` | `DocumentsSyncService`: push/pull/uploadFile/uploadRemarkFile, JWT, multipart, таймауты |
-| `src/ui/documents-view.ts` | `DocumentsView`: фасад «LogicTEAM.Документы» (топбар+сайдбар+контент), карточки со вложенными связанными, детали, привязка/отвязка, create/edit, замечания, фильтры по типам в сайдбаре, скачивание/открытие файлов, экспорт HTML |
+| `src/services/sert-import.service.ts` | `SertImportService`: импорт реестра сертификатов (sert/Реестр сертификатов TN1.json), загрузка файлов в S3, дедуп |
+| `src/utils/xlsx-writer.ts` | `buildXlsx`: генерация `.xlsx` без зависимостей (ZIP stored + CRC32 + inline strings) |
+| `src/ui/documents-view.ts` | `DocumentsView`: фасад «LogicTEAM.Документы» (топбар+сайдбар+контент), карточки со вложенными связанными, детали, привязка/отвязка, create/edit, замечания, фильтры по типам/странам в сайдбаре, скачивание/открытие файлов, экспорт HTML/Excel, импорт реестра |
 | `src/ui/settings-tab.ts` | Настройки: apiUrl, куратор по умолчанию |
 | `src/types/documents.ts` | `DocItem`, `DocumentRemark`, `DocumentsDbData`, `UploadFileResponse`, legacy-типы |
 | `src/styles.css` | Классы `tn-doc-*` на семантических токенах |
 
 ## Настройки (data.json)
 
-`apiUrl` (default `https://epyur.fvds.ru`), `defaultAuthor` (default `И.И. Иванов`).
+`apiUrl` (default `https://epyur.fvds.ru`), `defaultAuthor` (default `И.И. Иванов`),
+`legacyMigrated`, `sertImported` (одноразовый импорт реестра сертификатов),
+`lastAnnouncedVersion` (версия, для которой опубликована новость в ЦУП).
 
 ## Правила
 
@@ -58,6 +62,44 @@ SBE-плагин «Документы»: локальная БД-кэш доку
   `documents-service/` (ветка `backend`), если сам плагин не менялся.
 
 ## История работ
+
+### 2026-08-25 — v0.1.9 (реестр сертификатов: модель, импорт, экспорт Excel)
+- **Расширена модель `DocItem`** 13 полями под колонки Excel: `country`, `doc_number`,
+  `valid_from`, `comment`, `responsible`, `product_group`, `trademark`, `manufacturer`,
+  `tn_ved_code`, `testing_lab`, `protocol_number`, `certification_body`, `ik_date`.
+- **Бэкенд documents-service** (ветка `backend`): 13 новых колонок таблицы `documents`
+  (`ADD COLUMN IF NOT EXISTS`), структура `Document`, push (UPDATE/INSERT) и pull
+  (SELECT/Scan) с новыми полями. Задеплоено на VDS (`docker compose up -d --build documents`),
+  health OK, E2E round-trip всех полей (в т.ч. кириллица) зелёный.
+- **Подготовка данных**: Python-утилита `sert/Реестр сертификатов TN1.xlsx` (листы
+  «РД со сроком действия» 153 + «Заключения, испытания» 75) → `sert/Реестр сертификатов
+  TN1.json` с матчингом файлов из `sert/1. Сертификаты` по номеру документа
+  (нормализация/транслитерация, алиасы для `-С`/`-Р`, `CRP/CPR`; папки `\повтор\`/`\старое\`
+  исключены). Сопоставлено 138 файлов; отчёт по не-сматченным — в
+  `C:\Users\adm\AppData\Local\Temp\opencode\sert_match_report.txt`.
+- **Импорт реестра**: `SertImportService` — чтение JSON из вольта, загрузка файлов в S3
+  (`uploadFile`), создание `DocItem` (`sync_status local`, куратор `apotapov@tn.ru`),
+  дедуп по `doc_number`+`title` (если документ уже есть без файла, а файл появился —
+  дозагружается). Одноразовый автоимпорт при первом запуске (флаг `sertImported`) +
+  кнопка «📥 Импорт реестра» в сайдбаре (editor/admin). После импорта — автосинхронизация.
+- **UI**: карточка показывает `№ документа`, страну, ответственного; в деталях — таблица
+  «Реквизиты реестра» (все заполненные поля); форма создания/редактирования расширена
+  полями Excel (включая «Начало действия», «Дата ИК»); фильтр «Страна» в сайдбаре.
+- **Экспорт Excel**: кнопка «📊 Экспорт Excel» — выгрузка текущего отфильтрованного набора
+  (поиск + типы + страны) в настоящий `.xlsx` (самописный writer `src/utils/xlsx-writer.ts`,
+  ZIP stored + CRC32 + inline strings, без npm-зависимостей). Файл
+  `yourbase/sbe_documents/exports/Реестр_<дата>.xlsx` открывается системным приложением.
+- **Новость в «Новости» ЦУП** (`announceUpdate`) — подключён механизм публикации один раз
+  на версию (флаг `lastAnnouncedVersion`).
+- **Уведомления об истечении срока** (`/api/documents/notify-settings`, admin): в настройках
+  плагина включается отправка писем кураторам за N дней до окончания действия документа
+  (сроки настраиваются, по умолчанию «30,14,7»). Письмо уходит с `noreply` (та же
+  `SMTP_FROM`, что у auth-service) через локальный exim; одно письмо на (документ, срок) —
+  таблица `documents_notifications`. Фоновая проверка — на старте сервиса и раз в 6 ч
+  (нотификация с `startNotifyJob`); письма шлёт `documents-service`, не плагин.
+- Версия 0.1.8 → **0.1.9** (manifest + package.json). `npx tsc --noEmit` EXIT=0,
+  `npm run build` OK.
+- Дизайн-спека: `docs/superpowers/specs/2026-08-25-sbe-documents-sert-registry-design.md`.
 
 ### 2026-08-20 — v0.1.8 (пересборка за sbe-core: SbeContactsApi)
 - `sbe-core`: добавлены `SbeContactsApi` и `'sbe-contacts'` в `SbeServiceMap` — пересборка `main.js`, исходники плагина не менялись. Версия 0.1.7 → **0.1.8** (manifest + package.json).

@@ -13,22 +13,35 @@ import (
 )
 
 type Document struct {
-	ID            int64    `json:"id"`
-	Title         string   `json:"title"`
-	DocType       string   `json:"doc_type"`
-	CuratorEmail  string   `json:"curator_email"`
-	Deadline      int64    `json:"deadline"`
-	FileKey       string   `json:"file_key"`
-	FileName      string   `json:"file_name"`
-	FileSize      int64    `json:"file_size"`
-	FileURL       string   `json:"file_url"`
-	LinkURL       string   `json:"link_url"`
-	LinkFileName  string   `json:"link_file_name"`
-	ParentID      int64    `json:"parent_id"`
-	Completed     bool     `json:"completed"`
-	Remarks       []Remark `json:"remarks"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
+	ID               int64    `json:"id"`
+	Title            string   `json:"title"`
+	DocType          string   `json:"doc_type"`
+	CuratorEmail     string   `json:"curator_email"`
+	Deadline         int64    `json:"deadline"`
+	FileKey          string   `json:"file_key"`
+	FileName         string   `json:"file_name"`
+	FileSize         int64    `json:"file_size"`
+	FileURL          string   `json:"file_url"`
+	LinkURL          string   `json:"link_url"`
+	LinkFileName     string   `json:"link_file_name"`
+	ParentID         int64    `json:"parent_id"`
+	Completed        bool     `json:"completed"`
+	Remarks          []Remark `json:"remarks"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+	Country          string   `json:"country"`
+	DocNumber        string   `json:"doc_number"`
+	ValidFrom        int64    `json:"valid_from"`
+	Comment          string   `json:"comment"`
+	Responsible      string   `json:"responsible"`
+	ProductGroup     string   `json:"product_group"`
+	Trademark        string   `json:"trademark"`
+	Manufacturer     string   `json:"manufacturer"`
+	TnVedCode        string   `json:"tn_ved_code"`
+	TestingLab       string   `json:"testing_lab"`
+	ProtocolNumber   string   `json:"protocol_number"`
+	CertificationBody string  `json:"certification_body"`
+	IkDate           int64    `json:"ik_date"`
 }
 
 type Remark struct {
@@ -94,6 +107,9 @@ func main() {
 	if err := s.migrate(ctx); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+	if err := s.migrateNotifyTables(ctx); err != nil {
+		log.Fatalf("migrateNotifyTables: %v", err)
+	}
 	if err := s.seedOwner(ctx); err != nil {
 		log.Fatalf("seedOwner: %v", err)
 	}
@@ -110,11 +126,16 @@ func main() {
 	mux.HandleFunc("POST /api/documents/file", s.requirePerm("editor")(s.handleUploadFile))
 	mux.HandleFunc("POST /api/documents/remark-file", s.requirePerm("commenter")(s.handleUploadRemarkFile))
 	mux.HandleFunc("GET /api/documents/file", s.requirePerm("viewer")(s.handleDownloadFile))
+	mux.HandleFunc("GET /api/documents/file-link", s.requirePerm("viewer")(s.handleFileLink))
 	mux.HandleFunc("GET /api/documents/permissions", s.requirePerm("admin")(s.handleListPermissions))
 	mux.HandleFunc("POST /api/documents/permissions", s.requirePerm("admin")(s.handleSetPermission))
 	mux.HandleFunc("GET /api/documents/permissions/me", s.requirePerm("viewer")(s.handleMyPermission))
 	mux.HandleFunc("GET /api/documents/common-access", s.requirePerm("admin")(s.handleGetCommonAccess))
 	mux.HandleFunc("POST /api/documents/common-access", s.requirePerm("admin")(s.handleSetCommonAccess))
+	mux.HandleFunc("GET /api/documents/notify-settings", s.requirePerm("admin")(s.handleGetNotifySettings))
+	mux.HandleFunc("POST /api/documents/notify-settings", s.requirePerm("admin")(s.handleSetNotifySettings))
+
+	s.startNotifyJob()
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -167,6 +188,23 @@ CREATE TABLE IF NOT EXISTS documents_common_access (
 		return err
 	}
 	if _, err := s.pool.Exec(ctx, `
+ALTER TABLE documents
+	ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS doc_number TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS valid_from BIGINT NOT NULL DEFAULT 0,
+	ADD COLUMN IF NOT EXISTS comment TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS responsible TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS product_group TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS trademark TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS manufacturer TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS tn_ved_code TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS testing_lab TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS protocol_number TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS certification_body TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS ik_date BIGINT NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `
 UPDATE documents_permissions SET role = 'editor' WHERE role = 'user'`); err != nil {
 		return err
 	}
@@ -204,10 +242,17 @@ UPDATE documents SET
 	title = $2, doc_type = $3, curator_email = $4, deadline = $5,
 	file_key = $6, file_name = $7, file_size = $8, file_url = $9,
 	link_url = $10, link_file_name = $11, parent_id = $12, completed = $13,
-	remarks = $14, updated_at = $15
+	remarks = $14, updated_at = $15,
+	country = $16, doc_number = $17, valid_from = $18, comment = $19,
+	responsible = $20, product_group = $21, trademark = $22, manufacturer = $23,
+	tn_ved_code = $24, testing_lab = $25, protocol_number = $26,
+	certification_body = $27, ik_date = $28
 WHERE id = $1 AND updated_at < $15`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 				d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
-				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt)
+				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
+				d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
+				d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
+				d.CertificationBody, d.IkDate)
 			if err != nil {
 				log.Printf("push update: %v", err)
 				continue
@@ -218,11 +263,17 @@ WHERE id = $1 AND updated_at < $15`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 			}
 			insTag, err := s.pool.Exec(r.Context(), `
 INSERT INTO documents (id, title, doc_type, curator_email, deadline, file_key, file_name,
-	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
+	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15,
+	$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
 ON CONFLICT (id) DO NOTHING`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 				d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
-				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt)
+				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
+				d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
+				d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
+				d.CertificationBody, d.IkDate)
 			if err != nil {
 				log.Printf("push insert by id: %v", err)
 				continue
@@ -236,10 +287,16 @@ ON CONFLICT (id) DO NOTHING`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 
 		_, err = s.pool.Exec(r.Context(), `
 INSERT INTO documents (title, doc_type, curator_email, deadline, file_key, file_name,
-	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`, d.Title, d.DocType,
+	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
+	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
+	$15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`, d.Title, d.DocType,
 			d.CuratorEmail, d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
-			d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt)
+			d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
+			d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
+			d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
+			d.CertificationBody, d.IkDate)
 		if err != nil {
 			log.Printf("push insert: %v", err)
 			continue
@@ -253,7 +310,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`, d.Ti
 func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.pool.Query(r.Context(), `
 SELECT id, title, doc_type, curator_email, deadline, file_key, file_name, file_size,
-	file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at
+	file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
+	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date
 FROM documents ORDER BY id`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
@@ -268,7 +327,10 @@ FROM documents ORDER BY id`)
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&d.ID, &d.Title, &d.DocType, &d.CuratorEmail, &d.Deadline,
 			&d.FileKey, &d.FileName, &d.FileSize, &d.FileURL, &d.LinkURL, &d.LinkFileName,
-			&d.ParentID, &d.Completed, &remarksRaw, &createdAt, &updatedAt); err != nil {
+			&d.ParentID, &d.Completed, &remarksRaw, &createdAt, &updatedAt,
+			&d.Country, &d.DocNumber, &d.ValidFrom, &d.Comment, &d.Responsible, &d.ProductGroup,
+			&d.Trademark, &d.Manufacturer, &d.TnVedCode, &d.TestingLab, &d.ProtocolNumber,
+			&d.CertificationBody, &d.IkDate); err != nil {
 			log.Printf("pull scan: %v", err)
 			continue
 		}
@@ -376,6 +438,22 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(data); err != nil {
 		log.Printf("download write: %v", err)
 	}
+}
+
+// handleFileLink возвращает временную публичную ссылку на файл (presigned GET).
+func (s *Server) handleFileLink(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key is required"})
+		return
+	}
+	link, err := s.s3.Link(r.Context(), key)
+	if err != nil {
+		log.Printf("file-link: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "link error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"url": link})
 }
 
 func (s *Server) bumpSequence(ctx context.Context) {

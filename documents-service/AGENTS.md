@@ -47,6 +47,28 @@ docker compose logs documents --tail 20
 
 ## История
 
+- **2026-08-25 — Уведомления куратора об истечении срока:**
+  Таблицы `documents_notify_settings` (single-row: enabled, days '30,14,7') и
+  `documents_notifications` (document_id+day — дедуп писем). Эндпоинты (admin):
+  `GET/POST /api/documents/notify-settings`. `email.go` — отправка через локальный exim
+  (SMTP localhost:25, `SMTP_FROM` общая с auth-service = noreply@epyur.fvds.ru;
+  `extra_hosts host.docker.internal:host-gateway` добавлен в compose). `startNotifyJob` —
+  фоновая проверка при старте и раз в 6 ч: письмо куратору за N дней до окончания
+  действия (deadline в (now, now+N], completed=false, curator_email != ''), одно письмо
+  на (документ, срок). E2E (2026-08-25): настройки GET/POST, письмо на polishchuk@tn.ru
+  доставлено (`250 Ok`, exim mainlog), тестовые данные удалены, настройки сброшены
+  (enabled=false, days=30,14,7). `documents-service` собран локально (`go build` OK) и
+  в Docker.
+
+- **2026-08-25 — Поля реестра сертификатов (13 колонок):**
+  Таблица `documents` расширена (`ADD COLUMN IF NOT EXISTS`): `country`, `doc_number`,
+  `valid_from` (BIGINT), `comment`, `responsible`, `product_group`, `trademark`,
+  `manufacturer`, `tn_ved_code`, `testing_lab`, `protocol_number`, `certification_body`,
+  `ik_date` (BIGINT). Структура `Document` + push (UPDATE/INSERT по id и без id) + pull
+  (SELECT/Scan) включены. Задеплоено: `docker compose up -d --build documents`.
+  E2E (2026-08-25): health 200; push тестового документа с новыми полями → pull вернул
+  все поля (включая кириллицу) без изменений; тестовые записи удалены из БД.
+
 - **2026-08-17 — создание (sbe-documents, этап выноса модуля «Документы»):**
   Сервис создан зеркалом mailer-service (jwt.go/register.go скопированы с адаптацией под
   `documents`/`documents_permissions`), таблица `documents` + `documents_permissions`.

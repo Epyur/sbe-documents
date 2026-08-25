@@ -149,6 +149,36 @@ export class DocumentsSyncService {
     }
   }
 
+  /** Настройки уведомлений об истечении срока (для admin). */
+  async getNotifySettings(): Promise<{ enabled: boolean; days: number[] }> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/notify-settings`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { enabled?: boolean; days?: number[] };
+      return { enabled: !!data.enabled, days: Array.isArray(data.days) ? data.days : [] };
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе notify-settings:', errorMessage(e));
+      return { enabled: false, days: [] };
+    }
+  }
+
+  /** Сохраняет настройки уведомлений об истечении срока (для admin). */
+  async setNotifySettings(input: { enabled: boolean; days: number[] }): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/notify-settings`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(input),
+    });
+    this.assertOk(res);
+  }
+
   /** Устанавливает уровень общего доступа (для admin). level='' — отключить. */
   async setCommonAccess(level: string): Promise<void> {
     const token = await this.getToken();
@@ -189,6 +219,24 @@ export class DocumentsSyncService {
     }, 120000);
     this.assertOk(res);
     return res.arrayBuffer;
+  }
+
+  /** Возвращает временную публичную ссылку на файл (GET /api/documents/file-link?key=...). */
+  async getFileLink(fileKey: string): Promise<string> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/file-link?key=${encodeURIComponent(fileKey)}`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    }, 60000);
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { url?: string };
+      return data.url || '';
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе file-link:', errorMessage(e));
+      return '';
+    }
   }
 
   /** Загружает файл замечания в S3 через сервис. */
