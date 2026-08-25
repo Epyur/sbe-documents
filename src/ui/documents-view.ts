@@ -1335,6 +1335,7 @@ export class DocumentsView extends ItemView {
       content.createDiv({ cls: 'tn-doc-meta' }).setText('Управление типами документов доступно только администратору.');
       return;
     }
+    content.createEl('h4', { text: 'Группы типов документов' });
     this.renderTypeGroups(content);
   }
 
