@@ -47,6 +47,16 @@ docker compose logs documents --tail 20
 
 ## История
 
+- **2026-08-25 — Архив + типы (v0.1.10):**
+  Колонка `documents.archived` (BOOLEAN, default false) + push/pull. Эндпоинты:
+  `POST /api/documents/archive` `{id, archived}` и `DELETE /api/documents/{id}`
+  (доступно admin или editor, совпадающему с `curator_email`), `POST /api/documents/types/merge`
+  `{from:[], to:}` (admin — обновляет `doc_type` у документов). Авто-архив по истечении
+  срока: `checkArchived()` (старт + раз в 6 ч) переводит в `archived=true` документы с
+  `deadline < now`. Фикс бага: в `INSERT ... VALUES` без id был лишний плейсхолдер `$29`
+  («INSERT has more expressions than target columns») — исправлено на `$28`.
+  Задеплоено, E2E зелёный (push/archive/merge/delete).
+
 - **2026-08-25 — Уведомления куратора об истечении срока:**
   Таблицы `documents_notify_settings` (single-row: enabled, days '30,14,7') и
   `documents_notifications` (document_id+day — дедуп писем). Эндпоинты (admin):

@@ -179,6 +179,26 @@ export class DocumentsSyncService {
     this.assertOk(res);
   }
 
+  /** Объединяет/переименовывает типы документов на сервере (admin).
+   *  from — старые названия, to — общее имя. Возвращает число обновлённых документов. */
+  async mergeDocTypes(from: string[], to: string): Promise<number> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/types/merge`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ from, to }),
+    });
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { updated?: number };
+      return data.updated || 0;
+    } catch (e: unknown) {
+      console.warn('Документы: не JSON в ответе types/merge:', errorMessage(e));
+      return 0;
+    }
+  }
+
   /** Устанавливает уровень общего доступа (для admin). level='' — отключить. */
   async setCommonAccess(level: string): Promise<void> {
     const token = await this.getToken();
@@ -237,6 +257,29 @@ export class DocumentsSyncService {
       console.warn('Документы: не JSON в ответе file-link:', errorMessage(e));
       return '';
     }
+  }
+
+  /** Переводит документ в архив / возвращает из архива (куратор или admin). */
+  async archiveDoc(id: number, archived: boolean): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/archive`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id, archived }),
+    });
+    this.assertOk(res);
+  }
+
+  /** Удаляет документ из реестра (куратор или admin). */
+  async deleteDoc(id: number): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/documents/${id}`,
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
   }
 
   /** Загружает файл замечания в S3 через сервис. */

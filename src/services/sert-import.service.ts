@@ -180,6 +180,7 @@ export class SertImportService {
       protocol_number: rec.protocol_number || '',
       certification_body: rec.certification_body || '',
       ik_date: rec.ik_date || 0,
+      archived: false,
       created_at: now,
       updated_at: now,
       sync_status: 'local',

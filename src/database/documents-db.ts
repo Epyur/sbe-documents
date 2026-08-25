@@ -90,6 +90,42 @@ export class DocumentsDatabase {
     return true;
   }
 
+  /** Количество документов заданного типа. */
+  countByDocType(name: string): number {
+    const trimmed = (name || '').trim();
+    return this.data.documents.filter(d => d.doc_type === trimmed).length;
+  }
+
+  /** Объединяет типы: у документов с fromTypes[] doc_type заменяется на toType,
+   *  локальный реестр типов обновляется. Возвращает число затронутых документов. */
+  mergeDocType(fromTypes: string[], toType: string): number {
+    const to = (toType || '').trim();
+    if (!to) return 0;
+    const from = new Set(fromTypes.map(t => t.trim()).filter(t => t && t !== to));
+    if (from.size === 0) return 0;
+    let affected = 0;
+    for (const d of this.data.documents) {
+      if (from.has(d.doc_type)) {
+        d.doc_type = to;
+        affected++;
+      }
+    }
+    const set = new Set(this.data.doc_types.filter(t => !from.has(t)));
+    set.add(to);
+    this.data.doc_types = Array.from(set);
+    return affected;
+  }
+
+  /** Удаляет тип из локального реестра (только пустые группы — без документов). */
+  removeDocType(name: string): boolean {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return false;
+    if (this.countByDocType(trimmed) > 0) return false;
+    const before = this.data.doc_types.length;
+    this.data.doc_types = this.data.doc_types.filter(t => t !== trimmed);
+    return this.data.doc_types.length < before;
+  }
+
   private rememberDocType(t: string): void {
     const trimmed = (t || '').trim();
     if (!trimmed) return;

@@ -61,6 +61,8 @@ export interface DocItem {
   certification_body: string;
   /** Дата ИК (инспекционный контроль), мс (0 = нет). */
   ik_date: number;
+  /** В архиве (ручной архив куратора/админа или автоматический по истечении срока). */
+  archived: boolean;
 }
 
 export interface DocumentsDbData {

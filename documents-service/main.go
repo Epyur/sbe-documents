@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,6 +46,7 @@ type Document struct {
 	ProtocolNumber   string   `json:"protocol_number"`
 	CertificationBody string  `json:"certification_body"`
 	IkDate           int64    `json:"ik_date"`
+	Archived         bool     `json:"archived"`
 }
 
 type Remark struct {
@@ -134,6 +139,9 @@ func main() {
 	mux.HandleFunc("POST /api/documents/common-access", s.requirePerm("admin")(s.handleSetCommonAccess))
 	mux.HandleFunc("GET /api/documents/notify-settings", s.requirePerm("admin")(s.handleGetNotifySettings))
 	mux.HandleFunc("POST /api/documents/notify-settings", s.requirePerm("admin")(s.handleSetNotifySettings))
+	mux.HandleFunc("POST /api/documents/archive", s.requirePerm("editor")(s.handleArchiveDocument))
+	mux.HandleFunc("DELETE /api/documents/{id}", s.requirePerm("editor")(s.handleDeleteDocument))
+	mux.HandleFunc("POST /api/documents/types/merge", s.requirePerm("admin")(s.handleMergeDocTypes))
 
 	s.startNotifyJob()
 
@@ -201,7 +209,8 @@ ALTER TABLE documents
 	ADD COLUMN IF NOT EXISTS testing_lab TEXT NOT NULL DEFAULT '',
 	ADD COLUMN IF NOT EXISTS protocol_number TEXT NOT NULL DEFAULT '',
 	ADD COLUMN IF NOT EXISTS certification_body TEXT NOT NULL DEFAULT '',
-	ADD COLUMN IF NOT EXISTS ik_date BIGINT NOT NULL DEFAULT 0`); err != nil {
+	ADD COLUMN IF NOT EXISTS ik_date BIGINT NOT NULL DEFAULT 0,
+	ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`); err != nil {
 		return err
 	}
 	if _, err := s.pool.Exec(ctx, `
@@ -242,17 +251,17 @@ UPDATE documents SET
 	title = $2, doc_type = $3, curator_email = $4, deadline = $5,
 	file_key = $6, file_name = $7, file_size = $8, file_url = $9,
 	link_url = $10, link_file_name = $11, parent_id = $12, completed = $13,
-	remarks = $14, updated_at = $15,
+		remarks = $14, updated_at = $15,
 	country = $16, doc_number = $17, valid_from = $18, comment = $19,
 	responsible = $20, product_group = $21, trademark = $22, manufacturer = $23,
 	tn_ved_code = $24, testing_lab = $25, protocol_number = $26,
-	certification_body = $27, ik_date = $28
+	certification_body = $27, ik_date = $28, archived = $29
 WHERE id = $1 AND updated_at < $15`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 				d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
 				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
 				d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
 				d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
-				d.CertificationBody, d.IkDate)
+				d.CertificationBody, d.IkDate, d.Archived)
 			if err != nil {
 				log.Printf("push update: %v", err)
 				continue
@@ -265,15 +274,15 @@ WHERE id = $1 AND updated_at < $15`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 INSERT INTO documents (id, title, doc_type, curator_email, deadline, file_key, file_name,
 	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
 	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
-	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date)
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date, archived)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15,
-	$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+	$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
 ON CONFLICT (id) DO NOTHING`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 				d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
 				d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
 				d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
 				d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
-				d.CertificationBody, d.IkDate)
+				d.CertificationBody, d.IkDate, d.Archived)
 			if err != nil {
 				log.Printf("push insert by id: %v", err)
 				continue
@@ -289,14 +298,14 @@ ON CONFLICT (id) DO NOTHING`, d.ID, d.Title, d.DocType, d.CuratorEmail,
 INSERT INTO documents (title, doc_type, curator_email, deadline, file_key, file_name,
 	file_size, file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
 	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
-	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date)
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date, archived)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
-	$15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`, d.Title, d.DocType,
+	$15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`, d.Title, d.DocType,
 			d.CuratorEmail, d.Deadline, d.FileKey, d.FileName, d.FileSize, d.FileURL,
 			d.LinkURL, d.LinkFileName, d.ParentID, d.Completed, remarksJSON, updatedAt,
 			d.Country, d.DocNumber, d.ValidFrom, d.Comment, d.Responsible, d.ProductGroup,
 			d.Trademark, d.Manufacturer, d.TnVedCode, d.TestingLab, d.ProtocolNumber,
-			d.CertificationBody, d.IkDate)
+			d.CertificationBody, d.IkDate, d.Archived)
 		if err != nil {
 			log.Printf("push insert: %v", err)
 			continue
@@ -312,7 +321,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 SELECT id, title, doc_type, curator_email, deadline, file_key, file_name, file_size,
 	file_url, link_url, link_file_name, parent_id, completed, remarks, created_at, updated_at,
 	country, doc_number, valid_from, comment, responsible, product_group, trademark, manufacturer,
-	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date
+	tn_ved_code, testing_lab, protocol_number, certification_body, ik_date, archived
 FROM documents ORDER BY id`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
@@ -330,7 +339,7 @@ FROM documents ORDER BY id`)
 			&d.ParentID, &d.Completed, &remarksRaw, &createdAt, &updatedAt,
 			&d.Country, &d.DocNumber, &d.ValidFrom, &d.Comment, &d.Responsible, &d.ProductGroup,
 			&d.Trademark, &d.Manufacturer, &d.TnVedCode, &d.TestingLab, &d.ProtocolNumber,
-			&d.CertificationBody, &d.IkDate); err != nil {
+			&d.CertificationBody, &d.IkDate, &d.Archived); err != nil {
 			log.Printf("pull scan: %v", err)
 			continue
 		}
@@ -454,6 +463,134 @@ func (s *Server) handleFileLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"url": link})
+}
+
+// handleMergeDocTypes переименовывает/объединяет типы документов на сервере (admin).
+// from — старые названия типов, to — общее имя, которое получают все документы группы.
+func (s *Server) handleMergeDocTypes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		From []string `json:"from"`
+		To   string   `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	to := strings.TrimSpace(req.To)
+	if to == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "to is required"})
+		return
+	}
+	from := make([]string, 0, len(req.From))
+	for _, f := range req.From {
+		f = strings.TrimSpace(f)
+		if f != "" && f != to {
+			from = append(from, f)
+		}
+	}
+	if len(from) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"updated": 0})
+		return
+	}
+	tag, err := s.pool.Exec(r.Context(),
+		`UPDATE documents SET doc_type = $1 WHERE doc_type = ANY($2)`, to, from)
+	if err != nil {
+		log.Printf("types/merge: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": tag.RowsAffected()})
+}
+
+// docCurator возвращает куратора документа (для проверки прав).
+func (s *Server) docCurator(ctx context.Context, id int64) (string, error) {
+	var curator string
+	err := s.pool.QueryRow(ctx, `SELECT curator_email FROM documents WHERE id = $1`, id).Scan(&curator)
+	return curator, err
+}
+
+// docManageAllowed — документом может управлять admin или editor, совпадающий с куратором.
+func (s *Server) docManageAllowed(ctx context.Context, id int64, email, role string) (bool, error) {
+	curator, err := s.docCurator(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return role == "admin" || (role == "editor" && email == curator), nil
+}
+
+// handleArchiveDocument переводит документ в архив / возвращает из архива (куратор или admin).
+func (s *Server) handleArchiveDocument(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID       int64 `json:"id"`
+		Archived bool  `json:"archived"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if req.ID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	email, _ := r.Context().Value(permEmailCtx{}).(string)
+	role, err := s.effectiveRole(r.Context(), appIDFromEnv(), email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	allowed, err := s.docManageAllowed(r.Context(), req.ID, email, role)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		}
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: only curator or admin"})
+		return
+	}
+	if _, err := s.pool.Exec(r.Context(),
+		`UPDATE documents SET archived = $2 WHERE id = $1`, req.ID, req.Archived); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleDeleteDocument удаляет документ из реестра (куратор или admin).
+func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	email, _ := r.Context().Value(permEmailCtx{}).(string)
+	role, err := s.effectiveRole(r.Context(), appIDFromEnv(), email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	allowed, err := s.docManageAllowed(r.Context(), id, email, role)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		}
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: only curator or admin"})
+		return
+	}
+	if _, err := s.pool.Exec(r.Context(), `DELETE FROM documents WHERE id = $1`, id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	_, _ = s.pool.Exec(r.Context(), `DELETE FROM documents_notifications WHERE document_id = $1`, id)
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func (s *Server) bumpSequence(ctx context.Context) {

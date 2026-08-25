@@ -107,13 +107,32 @@ func (s *Server) handleSetNotifySettings(w http.ResponseWriter, r *http.Request)
 // startNotifyJob запускает фоновую проверку истекающих документов (на старте и далее раз в 6 ч).
 func (s *Server) startNotifyJob() {
 	go func() {
+		s.checkArchived()
 		s.checkNotifications()
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
+			s.checkArchived()
 			s.checkNotifications()
 		}
 	}()
+}
+
+// checkArchived переводит документы с истёкшим сроком действия в статус «Архивный».
+func (s *Server) checkArchived() {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE documents SET archived = true
+		WHERE deadline > 0 AND deadline < $1 AND archived = false`,
+		time.Now().UTC().UnixMilli())
+	if err != nil {
+		log.Printf("checkArchived: %v", err)
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Printf("checkArchived: в архив переведено документов: %d", n)
+	}
 }
 
 // checkNotifications отправляет кураторам письма об истекающих документах

@@ -6,7 +6,7 @@ import { buildXlsx } from '../utils/xlsx-writer';
 
 export const SBE_DOCUMENTS_VIEW_TYPE = 'sbe-documents-view';
 
-type NavKey = 'documents';
+type NavKey = 'documents' | 'documents-active' | 'documents-archived';
 
 /** Контролы полей реестра (колонки Excel) в форме создания/редактирования. */
 interface RegistryControls {
@@ -27,6 +27,8 @@ interface RegistryControls {
 
 const PAGE_META: Record<NavKey, { title: string; sub: string }> = {
   documents: { title: 'Все документы', sub: 'Реестр документов' },
+  'documents-active': { title: 'Действующие документы', sub: 'Документы вне архива' },
+  'documents-archived': { title: 'Архивные документы', sub: 'В архиве (в т.ч. с истёкшим сроком)' },
 };
 
 /** Расширения, которые Obsidian открывает встроенным просмотрщиком. */
@@ -52,6 +54,9 @@ export class DocumentsView extends ItemView {
   private searchQuery = '';
   private searchTimeout: number | null = null;
   private myRole = '';
+  private myEmail = '';
+  /** Глобальный фильтр по статусу: 'all' | 'active' (действующие) | 'archived' (архивные). */
+  private archivedFilter: 'all' | 'active' | 'archived' = 'all';
 
   constructor(leaf: WorkspaceLeaf, plugin: SbeDocumentsPlugin) {
     super(leaf);
@@ -78,9 +83,11 @@ export class DocumentsView extends ItemView {
     try {
       const me = await this.plugin.syncService.getMyPermission();
       this.myRole = me.hasAccess ? me.role : '';
+      this.myEmail = me.email || '';
     } catch (e: unknown) {
       console.warn('Документы: не удалось получить роль:', errorMessage(e));
       this.myRole = '';
+      this.myEmail = '';
     }
 
     this.buildShell();
@@ -134,11 +141,11 @@ export class DocumentsView extends ItemView {
     exportXlsxBtn.createSpan({ text: '📊' });
     exportXlsxBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Экспорт Excel' });
     exportXlsxBtn.addEventListener('click', () => { void this.exportExcel(); });
-    if (this.canEdit) {
-      const importBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
-      importBtn.createSpan({ text: '📥' });
-      importBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Импорт реестра' });
-      importBtn.addEventListener('click', () => { void this.importRegistry(); });
+    if (this.myRole === 'admin') {
+      const settingsBtn = actions.createEl('button', { cls: 'tn-doc-nav-action' });
+      settingsBtn.createSpan({ text: '⚙️' });
+      settingsBtn.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Настройки реестра' });
+      settingsBtn.addEventListener('click', () => { this.renderRegistrySettings(); });
     }
 
     const content = main.createDiv({ cls: 'tn-doc-content' });
@@ -165,9 +172,21 @@ export class DocumentsView extends ItemView {
     allDocs.dataset.key = 'documents';
     allDocs.addEventListener('click', (ev) => {
       ev.preventDefault();
-      this.key = 'documents';
-      this.syncNavActive();
-      this.renderPage();
+      this.applyNavKey('documents');
+    });
+    const activeDocs = docSubmenu.createEl('a', { cls: 'tn-doc-nav-item', attr: { href: '#' } });
+    activeDocs.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Действующие документы' });
+    activeDocs.dataset.key = 'documents-active';
+    activeDocs.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      this.applyNavKey('documents-active');
+    });
+    const archivedDocs = docSubmenu.createEl('a', { cls: 'tn-doc-nav-item', attr: { href: '#' } });
+    archivedDocs.createSpan({ cls: 'tn-doc-nav-lbl', text: 'Архивные документы' });
+    archivedDocs.dataset.key = 'documents-archived';
+    archivedDocs.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      this.applyNavKey('documents-archived');
     });
     docGroup.classList.add('open', 'active');
 
@@ -204,7 +223,7 @@ export class DocumentsView extends ItemView {
   private renderSidebarFilters(): void {
     if (!this.filtersEl) return;
     this.filtersEl.empty();
-    const types = this.plugin.documentsDb.getDocTypes();
+    const types = [...this.plugin.documentsDb.getDocTypes()].sort((a, b) => a.localeCompare(b, 'ru'));
     if (types.length === 0) {
       this.filtersEl.createDiv({ cls: 'tn-doc-nav-empty' }).setText('Типов пока нет');
       return;
@@ -263,6 +282,32 @@ export class DocumentsView extends ItemView {
     });
   }
 
+  /** Переход по пункту навигации (в т.ч. глобальные фильтры «Действующие»/«Архивные»). */
+  private applyNavKey(key: NavKey): void {
+    this.key = key;
+    this.archivedFilter = key === 'documents-active' ? 'active' : key === 'documents-archived' ? 'archived' : 'all';
+    this.syncNavActive();
+    this.renderPage();
+  }
+
+  /** Документ считается архивным: флаг архива ИЛИ срок действия уже истёк. */
+  private effectiveArchived(d: DocItem): boolean {
+    return !!d.archived || (d.deadline > 0 && d.deadline < Date.now());
+  }
+
+  /** Статус документа для отображения. */
+  private docStatus(d: DocItem): 'archived' | 'completed' | 'active' {
+    if (this.effectiveArchived(d)) return 'archived';
+    if (d.completed) return 'completed';
+    return 'active';
+  }
+
+  /** Управлять документом (архив/удаление) может admin или куратор документа. */
+  private canManage(d: DocItem): boolean {
+    if (!this.canEdit) return false;
+    return this.myRole === 'admin' || (!!this.myEmail && d.curator_email === this.myEmail);
+  }
+
   // ---- Страница ----
 
   private renderPage(): void {
@@ -315,6 +360,28 @@ export class DocumentsView extends ItemView {
     }
   }
 
+  /** Порядок документов: неархивные со сроком (ближе срок — выше) → неархивные без срока →
+   *  архивные (недавно истёкшие выше, истёкшие давно ниже). Внутри группы — по id. */
+  private compareDocs(a: DocItem, b: DocItem): number {
+    const aArch = this.effectiveArchived(a);
+    const bArch = this.effectiveArchived(b);
+    if (aArch !== bArch) return aArch ? 1 : -1;
+    const aD = a.deadline || 0;
+    const bD = b.deadline || 0;
+    if (aArch) {
+      if (aD === 0 && bD === 0) return a.id - b.id;
+      if (aD === 0) return 1;
+      if (bD === 0) return -1;
+      if (aD !== bD) return bD - aD;
+      return a.id - b.id;
+    }
+    if (aD === 0 && bD === 0) return a.id - b.id;
+    if (aD === 0) return 1;
+    if (bD === 0) return -1;
+    if (aD !== bD) return aD - bD;
+    return a.id - b.id;
+  }
+
   /** Дерево документов: корни и связанные (parent_id) по каждому родителю. */
   private getTree(): { roots: DocItem[]; byParent: Map<number, DocItem[]> } {
     const all = this.plugin.documentsDb.getAll();
@@ -330,9 +397,8 @@ export class DocumentsView extends ItemView {
         roots.push(d);
       }
     }
-    const byId = (a: DocItem, b: DocItem): number => a.id - b.id;
-    roots.sort(byId);
-    for (const list of byParent.values()) list.sort(byId);
+    roots.sort((a, b) => this.compareDocs(a, b));
+    for (const list of byParent.values()) list.sort((a, b) => this.compareDocs(a, b));
     return { roots, byParent };
   }
 
@@ -343,12 +409,14 @@ export class DocumentsView extends ItemView {
     return roots.filter(r => this.subtreeMatches(r, byParent, q));
   }
 
-  /** Совпадение документа с поиском и выбранными типами/странами. */
+  /** Совпадение документа с поиском, типами, странами и глобальным фильтром статуса. */
   private matches(d: DocItem, q: string): boolean {
     const qOk = !q || d.title.toLowerCase().includes(q);
     const tOk = this.selectedDocTypes.size === 0 || this.selectedDocTypes.has(d.doc_type);
     const cOk = this.selectedCountries.size === 0 || this.selectedCountries.has(d.country || '');
-    return qOk && tOk && cOk;
+    const aOk = this.archivedFilter === 'all'
+      || (this.archivedFilter === 'active' ? !this.effectiveArchived(d) : this.effectiveArchived(d));
+    return qOk && tOk && cOk && aOk;
   }
 
   /** Карточка показывается, если сам документ или любой вложенный совпал с фильтрами. */
@@ -377,7 +445,8 @@ export class DocumentsView extends ItemView {
     if (doc.doc_type) metaParts.push(`📂 ${doc.doc_type}`);
     if (doc.country) metaParts.push(`🌍 ${doc.country}`);
     if (doc.responsible) metaParts.push(`👤 ${doc.responsible}`);
-    metaParts.push(doc.completed ? '✅ Завершён' : '🟢 Активен');
+    const status = this.docStatus(doc);
+    metaParts.push(status === 'archived' ? '🗄 Архивный' : status === 'completed' ? '✅ Завершён' : '🟢 Активен');
     card.createDiv({ cls: 'tn-doc-card-meta', text: metaParts.join(' · ') });
 
     if (doc.file_key) {
@@ -448,7 +517,8 @@ export class DocumentsView extends ItemView {
     meta.createDiv({ text: `📂 Тип документа: ${doc.doc_type || '—'}` });
     meta.createDiv({ text: `👤 Куратор: ${doc.curator_email || '—'}` });
     if (doc.deadline) meta.createDiv({ text: `📅 Срок действия: ${new Date(doc.deadline).toLocaleDateString()}` });
-    meta.createDiv({ text: `✅ Статус: ${doc.completed ? 'Завершён' : 'Активен'}` });
+    const status = this.docStatus(doc);
+    meta.createDiv({ text: `✅ Статус: ${status === 'archived' ? 'Архивный' : status === 'completed' ? 'Завершён' : 'Активен'}` });
     if (doc.parent_id > 0) {
       const parent = this.plugin.documentsDb.getById(doc.parent_id);
       meta.createDiv({ text: `📎 Входит в: ${parent ? parent.title : '—'}` });
@@ -549,6 +619,54 @@ export class DocumentsView extends ItemView {
         await this.plugin.documentsDb.save();
         new Notice('Документ завершён');
         this.renderDocumentDetail(doc);
+      });
+    }
+
+    if (this.canManage(doc)) {
+      if (!this.effectiveArchived(doc)) {
+        const archiveBtn = btnRow.createEl('button', { text: '🗄 В архив', cls: 'tn-btn tn-btn-ghost' });
+        archiveBtn.addEventListener('click', async () => {
+          try {
+            await this.plugin.syncService.archiveDoc(doc.id, true);
+            doc.archived = true;
+            doc.sync_status = 'local';
+            this.plugin.documentsDb.update(doc.id, doc);
+            await this.plugin.documentsDb.save();
+            new Notice('Документ отправлен в архив');
+            this.renderDocumentDetail(doc);
+          } catch (e: unknown) {
+            new Notice(`Ошибка: ${errorMessage(e)}`);
+          }
+        });
+      } else if (doc.archived && (doc.deadline <= 0 || doc.deadline > Date.now())) {
+        const unarchiveBtn = btnRow.createEl('button', { text: '📤 Из архива', cls: 'tn-btn tn-btn-ghost' });
+        unarchiveBtn.addEventListener('click', async () => {
+          try {
+            await this.plugin.syncService.archiveDoc(doc.id, false);
+            doc.archived = false;
+            doc.sync_status = 'local';
+            this.plugin.documentsDb.update(doc.id, doc);
+            await this.plugin.documentsDb.save();
+            new Notice('Документ возвращён из архива');
+            this.renderDocumentDetail(doc);
+          } catch (e: unknown) {
+            new Notice(`Ошибка: ${errorMessage(e)}`);
+          }
+        });
+      }
+      const deleteBtn = btnRow.createEl('button', { text: '🗑 Удалить', cls: 'tn-btn tn-btn-ghost' });
+      deleteBtn.addEventListener('click', async () => {
+        const ok = window.confirm(`Удалить документ «${doc.title}»? Это действие необратимо.`);
+        if (!ok) return;
+        try {
+          await this.plugin.syncService.deleteDoc(doc.id);
+          this.plugin.documentsDb.delete(doc.id);
+          await this.plugin.documentsDb.save();
+          new Notice('Документ удалён');
+          this.renderDocumentsView();
+        } catch (e: unknown) {
+          new Notice(`Ошибка: ${errorMessage(e)}`);
+        }
       });
     }
 
@@ -809,7 +927,7 @@ export class DocumentsView extends ItemView {
       attr: { type: 'text', placeholder: 'polishchuk@tn.ru' },
       cls: 'tn-doc-input',
     });
-    curatorInput.value = this.plugin.settings.defaultAuthor;
+    curatorInput.value = this.myEmail || this.plugin.settings.defaultAuthor;
 
     const deadlineLabel = container.createEl('label', { text: 'Срок действия', cls: 'tn-doc-label' });
     const deadlineInput = container.createEl('input', { attr: { type: 'date' }, cls: 'tn-doc-input' });
@@ -907,6 +1025,7 @@ export class DocumentsView extends ItemView {
           protocol_number: regVals.protocol_number,
           certification_body: regVals.certification_body,
           ik_date: regVals.ik_date,
+          archived: false,
           created_at: now,
           updated_at: now,
           sync_status: 'local',
@@ -1088,7 +1207,8 @@ export class DocumentsView extends ItemView {
     if (existing) existing.remove();
     const datalist = document.createElement('datalist');
     datalist.id = list;
-    for (const t of this.plugin.documentsDb.getDocTypes()) {
+    const types = [...this.plugin.documentsDb.getDocTypes()].sort((a, b) => a.localeCompare(b, 'ru'));
+    for (const t of types) {
       datalist.createEl('option', { value: t });
     }
     document.body.appendChild(datalist);
@@ -1200,19 +1320,104 @@ export class DocumentsView extends ItemView {
     ];
   }
 
-  /** Импорт реестра сертификатов из sert/Реестр сертификатов TN1.json. */
-  private async importRegistry(): Promise<void> {
-    if (!this.canEdit) return;
-    const ok = window.confirm('Импортировать реестр сертификатов из файла «sert/Реестр сертификатов TN1.json»?\nУже добавленные ранее записи будут пропущены.');
-    if (!ok) return;
-    try {
-      const result = await this.plugin.importSertRegistry();
-      new Notice(`Импорт реестра: добавлено ${result.added}, пропущено ${result.skipped}; с файлами — ${result.withFile}, без файла — ${result.noFile}`);
-      this.renderSidebarFilters();
-      this.renderSidebarCountryFilters();
-      await this.syncAndRender();
-    } catch (e: unknown) {
-      new Notice(`Ошибка импорта: ${errorMessage(e)}`);
+  /** Открывает страницу «Настройки реестра» (управление типами документов, admin). */
+  private renderRegistrySettings(): void {
+    const container = this.bodyEl;
+    container.empty();
+
+    const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
+    backBtn.addEventListener('click', () => this.renderDocumentsView());
+
+    container.createEl('h3', { text: '⚙️ Настройки реестра' });
+
+    const content = container.createDiv({ cls: 'tn-doc-mt12' });
+    if (this.myRole !== 'admin') {
+      content.createDiv({ cls: 'tn-doc-meta' }).setText('Управление типами документов доступно только администратору.');
+      return;
+    }
+    this.renderTypeGroups(content);
+  }
+
+  /** Карточки групп типов: переименование, объединение, удаление пустых групп. */
+  private renderTypeGroups(container: HTMLElement): void {
+    container.empty();
+    const types = [...this.plugin.documentsDb.getDocTypes()].sort((a, b) => a.localeCompare(b, 'ru'));
+    if (types.length === 0) {
+      container.createDiv({ cls: 'tn-doc-meta' }).setText('Типов документов пока нет.');
+      return;
+    }
+    const info = container.createDiv({ cls: 'tn-doc-meta tn-doc-mb12' });
+    info.setText('Группу с документами можно только объединить с другой (общее имя). Группу без документов можно удалить.');
+
+    const list = container.createDiv({ cls: 'tn-doc-type-list' });
+    const reload = (): void => this.renderTypeGroups(container);
+
+    for (const t of types) {
+      const count = this.plugin.documentsDb.countByDocType(t);
+      const row = list.createDiv({ cls: 'tn-doc-type-row' });
+
+      const nameBox = row.createDiv({ cls: 'tn-doc-type-name' });
+      nameBox.createDiv({ cls: 'tn-doc-type-title', text: t });
+      nameBox.createDiv({ cls: 'tn-doc-type-count', text: `Документов: ${count}` });
+
+      const renameBox = row.createDiv({ cls: 'tn-doc-type-ctl' });
+      renameBox.createEl('label', { cls: 'tn-doc-type-lbl', text: 'Переименовать' });
+      const renameInput = renameBox.createEl('input', { attr: { type: 'text', value: t }, cls: 'tn-doc-input' });
+      const renameBtn = renameBox.createEl('button', { text: '💾 Применить', cls: 'tn-btn tn-btn-ghost' });
+      renameBtn.addEventListener('click', async () => {
+        const newName = renameInput.value.trim();
+        if (!newName || newName === t) return;
+        try {
+          await this.plugin.syncService.mergeDocTypes([t], newName);
+          this.plugin.documentsDb.mergeDocType([t], newName);
+          await this.plugin.documentsDb.save();
+          new Notice(`Тип «${t}» переименован в «${newName}»`);
+          reload();
+        } catch (e: unknown) {
+          new Notice(`Ошибка: ${errorMessage(e)}`);
+        }
+      });
+
+      const mergeBox = row.createDiv({ cls: 'tn-doc-type-ctl' });
+      mergeBox.createEl('label', { cls: 'tn-doc-type-lbl', text: 'Объединить с' });
+      const others = types.filter(x => x !== t);
+      if (others.length > 0) {
+        const select = mergeBox.createEl('select', { cls: 'tn-doc-select' });
+        for (const o of others) select.createEl('option', { value: o, text: o });
+        const mergeBtn = mergeBox.createEl('button', { text: '🔗 Объединить', cls: 'tn-btn tn-btn-ghost' });
+        mergeBtn.addEventListener('click', async () => {
+          const target = select.value;
+          try {
+            await this.plugin.syncService.mergeDocTypes([t], target);
+            this.plugin.documentsDb.mergeDocType([t], target);
+            await this.plugin.documentsDb.save();
+            new Notice(`Тип «${t}» объединён с «${target}»`);
+            reload();
+          } catch (e: unknown) {
+            new Notice(`Ошибка: ${errorMessage(e)}`);
+          }
+        });
+      } else {
+        mergeBox.createDiv({ cls: 'tn-doc-meta', text: '—' });
+      }
+
+      const delBox = row.createDiv({ cls: 'tn-doc-type-ctl' });
+      delBox.createEl('label', { cls: 'tn-doc-type-lbl', text: 'Удалить' });
+      const delBtn = delBox.createEl('button', { text: '🗑 Удалить', cls: 'tn-btn tn-btn-ghost' });
+      if (count > 0) {
+        delBtn.setAttr('disabled', 'true');
+        delBtn.setAttr('title', 'В группе есть документы — её можно только объединить');
+      }
+      delBtn.addEventListener('click', async () => {
+        const removed = this.plugin.documentsDb.removeDocType(t);
+        if (removed) {
+          await this.plugin.documentsDb.save();
+          new Notice(`Группа «${t}» удалена`);
+          reload();
+        } else {
+          new Notice('Группа не пустая — удалить нельзя');
+        }
+      });
     }
   }
 
