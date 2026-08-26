@@ -149,6 +149,8 @@ func main() {
 		Addr:              ":" + port,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	log.Printf("documents-service listening on :%s", port)
@@ -226,7 +228,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 	var req PushRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Лимит 20 МБ — push шлёт пачку документов.
+	if err := decodeJSON(w, r, &req, 20<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
@@ -488,7 +491,7 @@ func (s *Server) handleMergeDocTypes(w http.ResponseWriter, r *http.Request) {
 		From []string `json:"from"`
 		To   string   `json:"to"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
@@ -540,7 +543,7 @@ func (s *Server) handleArchiveDocument(w http.ResponseWriter, r *http.Request) {
 		ID       int64 `json:"id"`
 		Archived bool  `json:"archived"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
@@ -635,4 +638,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("writeJSON: %v", err)
 	}
+}
+
+// decodeJSON читает JSON-тело с жёстким лимитом размера (защита от DoS памятью, ревью 1.4).
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any, maxBytes int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	return json.NewDecoder(r.Body).Decode(v)
 }

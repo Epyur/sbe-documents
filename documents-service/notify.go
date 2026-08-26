@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -86,7 +85,7 @@ func (s *Server) handleGetNotifySettings(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleSetNotifySettings(w http.ResponseWriter, r *http.Request) {
 	var req NotifySettings
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
