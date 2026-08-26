@@ -428,8 +428,8 @@ func (s *Server) handleUploadRemarkFile(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	if key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key is required"})
+	if key == "" || !validObjectKey(key, "documents") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid or missing key"})
 		return
 	}
 	data, err := s.s3.Get(r.Context(), key)
@@ -449,11 +449,27 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// validObjectKey проверяет ключ S3: разрешён только собственный префикс сервиса,
+// без выхода за пределы («..») и служебных символов (path traversal — ревью B3).
+func validObjectKey(key, prefix string) bool {
+	if key == "" || len(key) > 512 {
+		return false
+	}
+	if strings.Contains(key, "..") || strings.ContainsAny(key, "\\\x00\r\n") {
+		return false
+	}
+	return strings.HasPrefix(key, prefix+"/")
+}
+
 // handleFileLink возвращает временную публичную ссылку на файл (presigned GET).
 func (s *Server) handleFileLink(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key is required"})
+		return
+	}
+	if !validObjectKey(key, "documents") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid key"})
 		return
 	}
 	link, err := s.s3.Link(r.Context(), key)

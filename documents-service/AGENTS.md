@@ -47,6 +47,13 @@ docker compose logs documents --tail 20
 
 ## История
 
+- **2026-08-26 — Фикс S3 path traversal (ревью B3):**
+  Валидация `?key=` в `handleDownloadFile`/`handleFileLink`: `validObjectKey`
+  отвергает `..`, backslash, control-символы и ключи без обязательного префикса
+  `documents/` (защита от чтения чужих бакетов общим S3-ключом).
+  Деплой выполнен; E2E: валидный ключ проходит к S3 (200), все варианты
+  traversal → 400.
+
 - **2026-08-25 — Архив + типы (v0.1.10):**
   Колонка `documents.archived` (BOOLEAN, default false) + push/pull. Эндпоинты:
   `POST /api/documents/archive` `{id, archived}` и `DELETE /api/documents/{id}`
